@@ -2,33 +2,6 @@ export type BacktestEnv = "prod" | "test";
 
 export type BacktestTimeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
 
-export type MarketRegime =
-  | "no_sideways_context"
-  | "sideways_active"
-  | "breakout_pending"
-  | "trend_active";
-
-export type BreakoutDirection = "up" | "down" | "none";
-
-export type KeypointsV3BacktestRequest = {
-  symbol: string;
-  timeframe: BacktestTimeframe;
-  env: BacktestEnv;
-  klineNum?: number;
-  dropUnclosed?: boolean;
-  includeKlines?: boolean;
-  priceTolerance?: number;
-  reactionLookahead?: number;
-  reactionThreshold?: number;
-  minTouchGap?: number;
-  recentWindowRatio?: number;
-  obviousReactionMultiplier?: number;
-  applyRegimeFilter?: boolean;
-  regimeBreakoutBuffer?: number;
-  regimeBreakoutConfirmBars?: number;
-  regimeRecentPivotBars?: number;
-};
-
 export type HistoricalBacktestKline = {
   timestamp: string;
   open: number;
@@ -42,39 +15,6 @@ export type HistoricalBacktestKeyPoint = {
   price: number;
   strength: number;
   timestamps: string[];
-};
-
-export type SidewaysRangeDetection = {
-  isSideways: boolean;
-  rangeHigh: number;
-  rangeLow: number;
-  upperTouches: number;
-  lowerTouches: number;
-  confidence: number;
-  reasons: string[];
-};
-
-export type MarketRegimeDetection = {
-  regime: MarketRegime;
-  breakoutDirection: BreakoutDirection;
-  consecutiveBreakoutCloses: number;
-  breakoutStartIndex: number;
-  reasons: string[];
-};
-
-export type KeypointsV3BacktestResponse = {
-  symbol: string;
-  timeframe: BacktestTimeframe;
-  env: BacktestEnv;
-  latestClose: number | null;
-  klines: HistoricalBacktestKline[];
-  keyPointsRaw: HistoricalBacktestKeyPoint[];
-  keyPoints: HistoricalBacktestKeyPoint[];
-  supports: HistoricalBacktestKeyPoint[];
-  resistances: HistoricalBacktestKeyPoint[];
-  rangeDetection: SidewaysRangeDetection | null;
-  marketRegime: MarketRegimeDetection | null;
-  meta: Record<string, unknown>;
 };
 
 export type GridCashKeypointsBacktestRequest = {

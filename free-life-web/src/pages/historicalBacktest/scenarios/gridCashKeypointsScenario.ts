@@ -245,11 +245,9 @@ export const gridCashKeypointsScenario: BacktestScenarioDefinition = {
       latestClose: response.latestClose,
       klines: normalizedKlines,
       lines: {
-        raw: [],
         final: finalLines,
         supports: supportLines,
         resistances: resistanceLines,
-        range: [],
       },
       keyPoints: response.keyPoints ?? [],
       supports: response.supports ?? [],

@@ -1,15 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ResponseDto } from '@/common/dto/response.dto';
 import { KlineCacheService } from '@/modules/kline-cache/kline-cache.service';
-import { GetKeyPointsV3BacktestDto } from './dto/get-keypoints-v3-backtest.dto';
 import { GetTrendStrengthBacktestDto } from './dto/get-trend-strength-backtest.dto';
 import { GetGridCashKeyPointsBacktestDto } from './dto/get-grid-cash-keypoints-backtest.dto';
 import {
   calculateKeyPoints,
-  calculateKeyPointsV3,
   classifyKeyPointsByLatestClose,
-  detectMarketRegimeFromSidewaysRange,
-  detectSidewaysRange,
 } from '@/utils/trading/trading';
 import { analyzeUnifiedTrendStrength } from '@/utils/trading/trendStrengthAnalyzer';
 import { gridCashDefaultConfig } from '@/modules/grid-cash/constants/grid-cash.cons';
@@ -36,119 +32,6 @@ export interface ForwardBacktestResult {
 @Injectable()
 export class HistoricalBacktestService {
   constructor(private readonly klineCacheService: KlineCacheService) {}
-
-  async getKeyPointsV3(dto: GetKeyPointsV3BacktestDto) {
-    const {
-      symbol,
-      timeframe,
-      env,
-      klineNum = 300,
-      dropUnclosed = true,
-      includeKlines = true,
-      priceTolerance,
-      reactionLookahead,
-      reactionThreshold,
-      minTouchGap,
-      recentWindowRatio,
-      obviousReactionMultiplier,
-      applyRegimeFilter = true,
-      regimeBreakoutBuffer,
-      regimeBreakoutConfirmBars,
-      regimeRecentPivotBars,
-    } = dto;
-
-    // 多取一根用于可选地去除“未收盘K线”
-    const rawKlines = this.klineCacheService.getKlines(symbol, timeframe, env, {
-      klinesSliceNum: klineNum + (dropUnclosed ? 1 : 0),
-      needReverse: true, // 保证输出顺序为“新->旧”，与 V3 输入要求一致
-    });
-
-    const klines = dropUnclosed ? rawKlines.slice(1) : rawKlines;
-
-    if (!klines || klines.length === 0) {
-      return ResponseDto.success({
-        symbol,
-        timeframe,
-        env,
-        latestClose: null,
-        klines: [],
-        keyPointsRaw: [],
-        keyPoints: [],
-        supports: [],
-        resistances: [],
-        rangeDetection: null,
-        marketRegime: null,
-        meta: {
-          klineNum: 0,
-          dropUnclosed,
-          includeKlines,
-        },
-      });
-    }
-
-    const keyPointsOptions = {
-      priceTolerance,
-      reactionLookahead,
-      reactionThreshold,
-      minTouchGap,
-      recentWindowRatio,
-      obviousReactionMultiplier,
-      regimeBreakoutBuffer,
-      regimeBreakoutConfirmBars,
-      regimeRecentPivotBars,
-    };
-
-    // 原始 V3 结果（不做阶段过滤），方便前端对比
-    const keyPointsRaw = calculateKeyPointsV3(klines, {
-      ...keyPointsOptions,
-      applyRegimeFilter: false,
-    });
-
-    // 最终 V3 结果（默认开启市场阶段过滤）
-    const keyPoints = calculateKeyPointsV3(klines, {
-      ...keyPointsOptions,
-      applyRegimeFilter,
-    });
-
-    const latestClose = klines[0]?.close ?? null;
-    const { supports, resistances } =
-      latestClose && latestClose > 0
-        ? classifyKeyPointsByLatestClose(keyPoints, latestClose)
-        : { supports: [], resistances: [] };
-
-    const rangeDetection = detectSidewaysRange(klines);
-    const marketRegime = detectMarketRegimeFromSidewaysRange(
-      klines,
-      rangeDetection,
-      {
-        breakoutBuffer: regimeBreakoutBuffer,
-        breakoutConfirmBars: regimeBreakoutConfirmBars,
-      },
-    );
-
-    return ResponseDto.success({
-      symbol,
-      timeframe,
-      env,
-      latestClose,
-      klines: includeKlines ? klines : [],
-      keyPointsRaw,
-      keyPoints,
-      supports,
-      resistances,
-      rangeDetection,
-      marketRegime,
-      meta: {
-        klineNum: klines.length,
-        dropUnclosed,
-        includeKlines,
-        v3Options: {
-          ...keyPointsOptions,
-          applyRegimeFilter,
-        },
-      },
-    });
-  }
 
   /** 获取现金网格生产策略正在使用的稳定关键位 */
   async getGridCashKeyPoints(dto: GetGridCashKeyPointsBacktestDto) {
@@ -322,7 +205,10 @@ export class HistoricalBacktestService {
       );
     }
 
-    const contextWindowKlines = klines.slice(anchorIndex, anchorIndex + klineNum);
+    const contextWindowKlines = klines.slice(
+      anchorIndex,
+      anchorIndex + klineNum,
+    );
     const forwardStartIndex = Math.max(0, anchorIndex - forwardBars);
     const chartKlines = klines.slice(forwardStartIndex, anchorIndex + klineNum);
     const anchorKline = contextWindowKlines[0] ?? null;
@@ -381,7 +267,8 @@ export class HistoricalBacktestService {
         },
         chartRange: {
           newestTimestamp: chartKlines[0]?.timestamp ?? null,
-          oldestTimestamp: chartKlines[chartKlines.length - 1]?.timestamp ?? null,
+          oldestTimestamp:
+            chartKlines[chartKlines.length - 1]?.timestamp ?? null,
           forwardBarsIncluded: anchorIndex - forwardStartIndex,
         },
       },
@@ -401,7 +288,9 @@ function evaluateForwardFollowThroughFromAnchor(
     return {
       direction: null,
       status:
-        direction === 'insufficient_data' ? 'insufficient_data' : 'not_applicable',
+        direction === 'insufficient_data'
+          ? 'insufficient_data'
+          : 'not_applicable',
       evaluateAtTime,
       triggerTime: null,
       triggerPrice: null,

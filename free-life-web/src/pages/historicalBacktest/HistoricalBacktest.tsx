@@ -1,4 +1,4 @@
-import { App, Card, Form, Segmented, Select, Space, Switch, Typography } from "antd";
+import { App, Card, Form, Select, Space, Switch, Typography } from "antd";
 import { useRequest } from "ahooks";
 import { useEffect, useMemo, useState } from "react";
 import { TradingPairIsActive } from "@/api/enums/global";
@@ -14,16 +14,13 @@ const { Text, Title } = Typography;
 const HistoricalBacktest = () => {
   const { message } = App.useApp();
   const [form] = Form.useForm<Record<string, unknown>>();
-  const [scenarioId, setScenarioId] = useState<BacktestScenarioId>("keypoints_v3");
+  const [scenarioId, setScenarioId] =
+    useState<BacktestScenarioId>("grid_cash_keypoints");
   const [result, setResult] = useState<BacktestScenarioRunResult>();
   const [loading, setLoading] = useState(false);
 
-  const [compareMode, setCompareMode] = useState<"final" | "raw" | "both">(
-    "final",
-  );
   const [showSupportsAndResistances, setShowSupportsAndResistances] =
     useState(true);
-  const [showRange, setShowRange] = useState(true);
 
   const activeScenario = useMemo(
     () => getBacktestScenarioById(scenarioId),
@@ -51,8 +48,6 @@ const HistoricalBacktest = () => {
     form.resetFields();
     form.setFieldsValue(activeScenario.initialValues as any);
     setResult(undefined);
-    setCompareMode("final");
-    setShowRange(activeScenario.id === "keypoints_v3");
   }, [activeScenario, form]);
 
   const handleRun = async (values: Record<string, unknown>) => {
@@ -69,7 +64,6 @@ const HistoricalBacktest = () => {
   };
 
   const isTrendScenario = activeScenario.id === "trend_strength";
-  const isKeypointsV3Scenario = activeScenario.id === "keypoints_v3";
 
   return (
     <div className="p-2">
@@ -79,7 +73,7 @@ const HistoricalBacktest = () => {
             历史回测
           </Title>
           <Text type="secondary">
-            已接入现金网格关键位、关键位V3与趋势强弱回测场景。
+            已接入现金网格关键位与趋势强弱回测场景。
           </Text>
 
           <Space wrap>
@@ -119,20 +113,6 @@ const HistoricalBacktest = () => {
           extra={
             isTrendScenario ? null : (
               <Space wrap>
-                {isKeypointsV3Scenario && (
-                  <Segmented
-                    size="small"
-                    options={[
-                      { label: "Final", value: "final" },
-                      { label: "Raw", value: "raw" },
-                      { label: "Both", value: "both" },
-                    ]}
-                    value={compareMode}
-                    onChange={(value) =>
-                      setCompareMode(value as "final" | "raw" | "both")
-                    }
-                  />
-                )}
                 <Space size={4}>
                   <Text>支撑阻力</Text>
                   <Switch
@@ -141,25 +121,13 @@ const HistoricalBacktest = () => {
                     onChange={setShowSupportsAndResistances}
                   />
                 </Space>
-                {isKeypointsV3Scenario && (
-                  <Space size={4}>
-                    <Text>横盘区间</Text>
-                    <Switch
-                      size="small"
-                      checked={showRange}
-                      onChange={setShowRange}
-                    />
-                  </Space>
-                )}
               </Space>
             )
           }
         >
           <BacktestKlineChart
             data={result?.chartData}
-            compareMode={compareMode}
             showSupportsAndResistances={showSupportsAndResistances}
-            showRange={showRange}
           />
         </Card>
 

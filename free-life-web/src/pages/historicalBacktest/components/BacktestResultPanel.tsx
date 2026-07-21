@@ -5,7 +5,6 @@ import type { HistoricalBacktestKeyPoint } from "@/api/types/historicalBacktestT
 import type {
   BacktestScenarioRunResult,
   GridCashKeypointsScenarioViewData,
-  KeypointsV3ScenarioViewData,
   TrendStrengthScenarioViewData,
 } from "../scenarios/types";
 
@@ -78,17 +77,11 @@ const getFollowStatusTagColor = (status: string): string => {
 };
 
 const renderKeypointsPanel = (
-  _result: BacktestScenarioRunResult,
-  viewData: KeypointsV3ScenarioViewData | GridCashKeypointsScenarioViewData,
+  viewData: GridCashKeypointsScenarioViewData,
 ) => {
-  const keyPointsRaw = "keyPointsRaw" in viewData ? viewData.keyPointsRaw : null;
-  const latestTouchAtEnd = keyPointsRaw === null;
-  const finalRows = toRows(viewData.keyPoints ?? [], latestTouchAtEnd);
-  const supportRows = toRows(viewData.supports ?? [], latestTouchAtEnd);
-  const resistanceRows = toRows(viewData.resistances ?? [], latestTouchAtEnd);
-  const rangeDetection =
-    "rangeDetection" in viewData ? viewData.rangeDetection : null;
-  const marketRegime = "marketRegime" in viewData ? viewData.marketRegime : null;
+  const finalRows = toRows(viewData.keyPoints ?? [], true);
+  const supportRows = toRows(viewData.supports ?? [], true);
+  const resistanceRows = toRows(viewData.resistances ?? [], true);
   const effectiveOptions =
     typeof viewData.meta?.options === "object" && viewData.meta.options !== null
       ? (viewData.meta.options as Record<string, unknown>)
@@ -107,18 +100,11 @@ const renderKeypointsPanel = (
           <Tag>{viewData.timeframe}</Tag>
           <Tag>{viewData.env}</Tag>
           <Tag color="gold">latestClose: {viewData.latestClose ?? "-"}</Tag>
-          {marketRegime?.regime && (
-            <Tag color="purple">regime: {marketRegime.regime}</Tag>
-          )}
         </Space>
 
         <div className="mt-3">
-          <Text>{keyPointsRaw ? "关键位(final/raw)：" : "关键位数量："}</Text>
-          <Text strong>
-            {keyPointsRaw
-              ? `${viewData.keyPoints.length}/${keyPointsRaw.length}`
-              : viewData.keyPoints.length}
-          </Text>
+          <Text>关键位数量：</Text>
+          <Text strong>{viewData.keyPoints.length}</Text>
         </div>
         <div className="mt-1">
           <Text>支撑/阻力：</Text>
@@ -126,26 +112,11 @@ const renderKeypointsPanel = (
             strong
           >{`${viewData.supports.length}/${viewData.resistances.length}`}</Text>
         </div>
-        {!keyPointsRaw && effectiveOptionsText && (
+        {effectiveOptionsText && (
           <div className="mt-2">
             <Text type="secondary">生效参数：{effectiveOptionsText}</Text>
           </div>
         )}
-        {rangeDetection && (
-          <div className="mt-1">
-            <Text>
-              横盘区间：{rangeDetection.rangeLow} ~ {rangeDetection.rangeHigh}
-              （置信度 {rangeDetection.confidence}）
-            </Text>
-          </div>
-        )}
-        {marketRegime?.reasons?.length ? (
-          <div className="mt-2">
-            <Text type="secondary">
-              阶段原因：{marketRegime.reasons.join("；")}
-            </Text>
-          </div>
-        ) : null}
       </Card>
 
       <Card title="关键位（最终）">
@@ -350,9 +321,6 @@ export const BacktestResultPanel = ({ result }: BacktestResultPanelProps) => {
   }
 
   return renderKeypointsPanel(
-    result,
-    result.viewData as
-      | KeypointsV3ScenarioViewData
-      | GridCashKeypointsScenarioViewData,
+    result.viewData as GridCashKeypointsScenarioViewData,
   );
 };

@@ -3,13 +3,9 @@ import { dispose, init, type Chart, type Period } from "klinecharts";
 import { useEffect, useMemo, useRef } from "react";
 import type { BacktestChartData, BacktestHorizontalLine } from "../scenarios/types";
 
-type CompareMode = "final" | "raw" | "both";
-
 type BacktestKlineChartProps = {
   data?: BacktestChartData;
-  compareMode: CompareMode;
   showSupportsAndResistances: boolean;
-  showRange: boolean;
 };
 
 const mapTimeframeToPeriod = (timeframe: string): Period => {
@@ -46,9 +42,7 @@ const resolvePricePrecision = (value: number | null) => {
 
 export const BacktestKlineChart = ({
   data,
-  compareMode,
   showSupportsAndResistances,
-  showRange,
 }: BacktestKlineChartProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -58,22 +52,12 @@ export const BacktestKlineChart = ({
     if (!data) {
       return [] as BacktestHorizontalLine[];
     }
-    const compareLines =
-      compareMode === "both"
-        ? [...data.lines.raw, ...data.lines.final]
-        : compareMode === "raw"
-          ? data.lines.raw
-          : data.lines.final;
-
-    const lines = [...compareLines];
+    const lines = [...data.lines.final];
     if (showSupportsAndResistances) {
       lines.push(...data.lines.supports, ...data.lines.resistances);
     }
-    if (showRange) {
-      lines.push(...data.lines.range);
-    }
     return lines;
-  }, [data, compareMode, showSupportsAndResistances, showRange]);
+  }, [data, showSupportsAndResistances]);
 
   useEffect(() => {
     if (!containerRef.current) {

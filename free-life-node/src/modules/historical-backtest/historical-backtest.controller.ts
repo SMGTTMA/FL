@@ -1,6 +1,5 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { HistoricalBacktestService } from './historical-backtest.service';
-import { GetKeyPointsV3BacktestDto } from './dto/get-keypoints-v3-backtest.dto';
 import { GetTrendStrengthBacktestDto } from './dto/get-trend-strength-backtest.dto';
 import { GetGridCashKeyPointsBacktestDto } from './dto/get-grid-cash-keypoints-backtest.dto';
 
@@ -11,18 +10,6 @@ export class HistoricalBacktestController {
   ) {}
 
   /**
-   * 获取 V3 关键位（历史回测视角）
-   *
-   * 说明：
-   * - 返回原始关键位（未做阶段过滤）与最终关键位（按阶段过滤）
-   * - 返回横盘识别与市场阶段信息，供前端标注展示
-   */
-  @Post('keypoints-v3')
-  async getKeyPointsV3(@Body() dto: GetKeyPointsV3BacktestDto) {
-    return this.historicalBacktestService.getKeyPointsV3(dto);
-  }
-
-  /**
    * 获取现金网格当前使用的稳定关键位（历史回测视角）
    *
    * 说明：
@@ -30,9 +17,7 @@ export class HistoricalBacktestController {
    * - 返回关键位及按当前价格划分后的支撑/阻力
    */
   @Post('grid-cash-keypoints')
-  async getGridCashKeyPoints(
-    @Body() dto: GetGridCashKeyPointsBacktestDto,
-  ) {
+  async getGridCashKeyPoints(@Body() dto: GetGridCashKeyPointsBacktestDto) {
     return this.historicalBacktestService.getGridCashKeyPoints(dto);
   }
 

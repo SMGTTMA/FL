@@ -4,18 +4,12 @@ import type {
   ForwardBacktestResult,
   GridCashKeypointsBacktestResponse,
   HistoricalBacktestKeyPoint,
-  KeypointsV3BacktestResponse,
-  MarketRegimeDetection,
-  SidewaysRangeDetection,
   TrendStrengthAnchor,
   TrendStrengthBacktestResponse,
   UnifiedTrendStrengthResult,
 } from "@/api/types/historicalBacktestTypes";
 
-export type BacktestScenarioId =
-  | "keypoints_v3"
-  | "grid_cash_keypoints"
-  | "trend_strength";
+export type BacktestScenarioId = "grid_cash_keypoints" | "trend_strength";
 
 export type BacktestFieldType = "input" | "select" | "number" | "switch" | "datetime";
 
@@ -43,7 +37,7 @@ export type BacktestLineType = "solid" | "dashed";
 export type BacktestHorizontalLine = {
   id: string;
   label: string;
-  source: "raw" | "final" | "support" | "resistance" | "range";
+  source: "final" | "support" | "resistance";
   price: number;
   color: string;
   lineType: BacktestLineType;
@@ -69,22 +63,10 @@ export type BacktestChartData = {
   // 仅趋势强弱场景使用：用于在图上标记“做单决策点”
   decisionKlineTimestamp?: number | null;
   lines: {
-    raw: BacktestHorizontalLine[];
     final: BacktestHorizontalLine[];
     supports: BacktestHorizontalLine[];
     resistances: BacktestHorizontalLine[];
-    range: BacktestHorizontalLine[];
   };
-};
-
-export type KeypointsV3ScenarioViewData = BacktestChartData & {
-  keyPointsRaw: HistoricalBacktestKeyPoint[];
-  keyPoints: HistoricalBacktestKeyPoint[];
-  supports: HistoricalBacktestKeyPoint[];
-  resistances: HistoricalBacktestKeyPoint[];
-  rangeDetection: SidewaysRangeDetection | null;
-  marketRegime: MarketRegimeDetection | null;
-  meta: Record<string, unknown>;
 };
 
 export type GridCashKeypointsScenarioViewData = BacktestChartData & {
@@ -100,14 +82,6 @@ export type TrendStrengthScenarioViewData = BacktestChartData & {
   trendResult: UnifiedTrendStrengthResult;
   forwardBacktest: ForwardBacktestResult;
   meta: Record<string, unknown>;
-};
-
-export type KeypointsV3ScenarioRunResult = {
-  scenarioId: "keypoints_v3";
-  chartData: BacktestChartData;
-  viewData: KeypointsV3ScenarioViewData;
-  rawResponse: KeypointsV3BacktestResponse;
-  requestSnapshot: Record<string, unknown>;
 };
 
 export type GridCashKeypointsScenarioRunResult = {
@@ -127,7 +101,6 @@ export type TrendStrengthScenarioRunResult = {
 };
 
 export type BacktestScenarioRunResult =
-  | KeypointsV3ScenarioRunResult
   | GridCashKeypointsScenarioRunResult
   | TrendStrengthScenarioRunResult;
 

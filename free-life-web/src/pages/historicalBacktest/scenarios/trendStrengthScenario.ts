@@ -287,11 +287,9 @@ export const trendStrengthScenario: BacktestScenarioDefinition = {
       selectedKlineTimestamp,
       decisionKlineTimestamp,
       lines: {
-        raw: [],
         final: [],
         supports: [],
         resistances: [],
-        range: [],
       },
       evaluateAt: response.evaluateAt,
       anchor: response.anchor,
