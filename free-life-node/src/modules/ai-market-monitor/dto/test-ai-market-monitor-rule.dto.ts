@@ -1,0 +1,7 @@
+import { IsNotEmpty, IsNumber } from 'class-validator';
+
+export class TestAiMarketMonitorRuleDto {
+  @IsNotEmpty({ message: '规则ID不能为空' })
+  @IsNumber()
+  ruleId: number;
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Free Life Node 开发规范"
+  short_description: "记录并执行 Free Life Node 项目的开发注意事项"
+  default_prompt: "使用 $free-life-node-dev 按项目约定完成本次开发任务。"

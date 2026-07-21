@@ -1,0 +1,18 @@
+{
+  "name": "free-life",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev:web": "pnpm --dir free-life-web start:dev",
+    "dev:node": "pnpm --dir free-life-node start:dev",
+    "build": "pnpm run build:web && pnpm run build:node",
+    "build:web": "pnpm --dir free-life-web build",
+    "build:node": "pnpm --dir free-life-node build",
+    "preview:web": "pnpm --dir free-life-web preview",
+    "start:node": "pnpm --dir free-life-node start",
+    "start:node:prod": "pnpm --dir free-life-node start:prod",
+    "lint:node": "pnpm --dir free-life-node lint",
+    "test:node": "pnpm --dir free-life-node test",
+    "test:node:e2e": "pnpm --dir free-life-node test:e2e"
+  }
+}
