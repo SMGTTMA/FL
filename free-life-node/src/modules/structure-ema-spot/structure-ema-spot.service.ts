@@ -76,6 +76,15 @@ type SignalGroup = {
   emaPeriod: number;
 };
 
+/**
+ * 日线结构驱动的现货 EMA 波段策略。
+ *
+ * 日线结构只负责决定当前允许使用的交易模式：上涨使用较大的 EMA 周期，
+ * 震荡使用较小的 EMA 周期，下跌则停止开仓。实际入场、出场都由小周期
+ * 已收盘 K 线完成，持仓和挂单状态记录在 active_spot_ema_trades 中。
+ *
+ * 本策略不设置止损；卖出前必须达到每笔交易记录的最低止盈价。
+ */
 @Injectable()
 export class StructureEmaSpotService {
   private readonly logger = new Logger(StructureEmaSpotService.name);
@@ -95,7 +104,10 @@ export class StructureEmaSpotService {
     private readonly exceptionLogService: ExceptionLogService,
   ) {}
 
-  /** K线缓存整5分钟第0秒更新，策略延迟到第6秒执行。 */
+  /**
+   * 扫描全部运行中的策略。
+   * K 线缓存整 5 分钟第 0 秒更新，策略延迟到第 6 秒执行，避免读取更新中的缓存。
+   */
   @Cron('6 */5 * * * *')
   async executeStrategies(): Promise<void> {
     const now = new Date();
@@ -143,6 +155,14 @@ export class StructureEmaSpotService {
     }
   }
 
+  /**
+   * 执行单个策略的一轮完整流程：
+   * 1. 同步交易所挂单与本地交易状态；
+   * 2. 读取日线方向、关键位并处理剧本变化；
+   * 3. 计算各持仓对应的 EMA 信号；
+   * 4. 处理关键位突破、退出信号和当前模式的新入场；
+   * 5. 保存本轮已处理 K 线及剧本快照。
+   */
   private async executeStrategy(
     strategy: StrategyRecord,
     env: KlineEnv,
@@ -163,6 +183,7 @@ export class StructureEmaSpotService {
     const openOrders = openOrdersRes?.data || [];
     const marketInfo = this.normalizeMarketInfo(marketInfoRes?.data);
 
+    // 必须先同步订单状态，后续资金占用、入场间距和退出判断才会使用最新数据。
     await this.syncOrderStates(strategy, config, openOrders, now.getTime());
 
     const snapshot = await this.getStructureSnapshot(strategy);
@@ -192,6 +213,7 @@ export class StructureEmaSpotService {
       direction: snapshot.direction,
       keyLevels: snapshot.keyLevels,
       marketInfo,
+      // 剧本变化当轮只处理旧订单和运行状态，从下一根新收盘 K 线开始入场。
       allowEntry: !structureChanged,
     });
 
@@ -200,6 +222,11 @@ export class StructureEmaSpotService {
     await this.strategyRecordRepository.save(strategy);
   }
 
+  /**
+   * 根据交易所当前挂单同步本地状态。
+   * 按本策略约定：本地订单不在 openOrders 中，就直接认为买入或卖出已经完成。
+   * 这是有意采用的简化模型，用户在交易所手动操作时也遵循同一规则。
+   */
   private async syncOrderStates(
     strategy: StrategyRecord,
     config: StructureEmaSpotConfig,
@@ -250,6 +277,7 @@ export class StructureEmaSpotService {
     await this.cancelPendingBuyTrades(strategy, expiredBuyTrades);
   }
 
+  /** 买单最多保留配置指定的完整 K 线数量，超时仍未成交就取消。 */
   private isPendingBuyExpired(
     trade: ActiveSpotEmaTrade,
     config: StructureEmaSpotConfig,
@@ -271,6 +299,7 @@ export class StructureEmaSpotService {
     return now >= expiresAt;
   }
 
+  /** 先取消交易所买单，再删除相应的本地待买记录。 */
   private async cancelPendingBuyTrades(
     strategy: StrategyRecord,
     trades: ActiveSpotEmaTrade[],
@@ -289,6 +318,7 @@ export class StructureEmaSpotService {
     );
   }
 
+  /** 读取人工维护的 D1 方向和普通关键位，组成当前日线剧本快照。 */
   private async getStructureSnapshot(strategy: StrategyRecord): Promise<{
     direction: StrategyMarketDirectionType | null;
     keyLevels: StrategyKeyLevel[];
@@ -314,6 +344,10 @@ export class StructureEmaSpotService {
     };
   }
 
+  /**
+   * 响应日线剧本变化：所有未成交买单立即取消；如果交易模式已经切换，
+   * 旧模式中达到最低利润要求的持仓会挂出止盈单，未盈利仓位继续等待后续退出信号。
+   */
   private async handleStructureChange(args: {
     strategy: StrategyRecord;
     config: StructureEmaSpotConfig;
@@ -360,6 +394,10 @@ export class StructureEmaSpotService {
     );
   }
 
+  /**
+   * 获取最新已收盘的 M5 收盘价。
+   * needReverse=true 时索引 0 是形成中的 K 线，所以必须读取索引 1。
+   */
   private getLatestClosedPrice(symbol: string, env: KlineEnv): number | null {
     const klines = this.klineCacheService.getKlines(symbol, TimeFrame.M5, env, {
       needReverse: true,
@@ -369,6 +407,10 @@ export class StructureEmaSpotService {
     return Number.isFinite(price) && price > 0 ? price : null;
   }
 
+  /**
+   * 逐个 EMA 信号组处理关键位突破、EMA 出场和新入场。
+   * runtime 中记录每组最后处理的 K 线时间，保证同一根收盘 K 线只处理一次。
+   */
   private async processSignalGroups(args: {
     strategy: StrategyRecord;
     config: StructureEmaSpotConfig;
@@ -404,6 +446,7 @@ export class StructureEmaSpotService {
         continue;
       }
 
+      // 上涨模式额外响应人工关键位突破；震荡模式完全由 EMA 信号驱动。
       let keyLevelBreakOccurred = false;
       if (group.mode === 'UP') {
         keyLevelBreakOccurred = await this.handleKeyLevelBreak({
@@ -449,11 +492,17 @@ export class StructureEmaSpotService {
         });
       }
 
+      // 无论本根 K 线是否实际下单，都标记为已处理，防止定时任务重复触发同一信号。
       args.runtime.lastProcessedKlineTime[profileKey] =
         context.currentKlineTime;
     }
   }
 
+  /**
+   * 构造本轮需要计算的 EMA 组。
+   * 除当前配置外，还要保留已有持仓最初使用的周期和 EMA 参数；这样修改配置后，
+   * 老持仓仍能等待自己的 EMA 退出信号，新配置只影响后续入场。
+   */
   private buildSignalGroups(
     trades: ActiveSpotEmaTrade[],
     config: StructureEmaSpotConfig,
@@ -490,6 +539,7 @@ export class StructureEmaSpotService {
     return [...groups.values()];
   }
 
+  /** 获取形成中 K 线之外的历史数据，并计算最近两根已收盘 K 线的 EMA 信号。 */
   private getSignalContext(
     symbol: string,
     env: KlineEnv,
@@ -507,6 +557,10 @@ export class StructureEmaSpotService {
     return buildEmaSignalContext(klines, group.emaPeriod);
   }
 
+  /**
+   * 处理上涨模式的关键位向上突破。
+   * 同一个关键位在当前日线剧本中只处理一次；突破后取消上涨买单，并退出已盈利持仓。
+   */
   private async handleKeyLevelBreak(args: {
     strategy: StrategyRecord;
     context: EmaSignalContext;
@@ -552,6 +606,11 @@ export class StructureEmaSpotService {
     return true;
   }
 
+  /**
+   * 根据信号创建一份限价买单。
+   * 单份资金 = 策略总资金 / 当前模式的 positionParts；已有买单、持仓和待卖仓位
+   * 都会计入占用资金，避免总体资金超过策略预算。
+   */
   private async placeEntryOrder(args: {
     strategy: StrategyRecord;
     config: StructureEmaSpotConfig;
@@ -579,6 +638,7 @@ export class StructureEmaSpotService {
     );
     if (availableCapital + Number.EPSILON < slotCapital) return;
 
+    // 使用信号 K 线收盘价挂限价买单，并按交易所价格精度规范化。
     const entryPrice = roundUpPrice({
       price: args.context.currentClose,
       precision: args.marketInfo.precisionPrice,
@@ -593,6 +653,7 @@ export class StructureEmaSpotService {
       return;
     }
 
+    // 数量必须按交易所 stepLength 向下截断，避免实际占用资金超过单份预算。
     const tradeAmount = truncateDownByStep(
       slotCapital / entryPrice,
       args.marketInfo.stepLength,
@@ -609,6 +670,7 @@ export class StructureEmaSpotService {
       return;
     }
 
+    // 最低止盈价在入场时固定记录，之后所有出场信号都必须先满足该价格。
     const takeProfitPrice = roundUpPrice({
       price: entryPrice * (1 + args.config.profitPoint),
       precision: args.marketInfo.precisionPrice,
@@ -665,6 +727,11 @@ export class StructureEmaSpotService {
     }
   }
 
+  /**
+   * 限制新买单和现有订单的价格距离。
+   * 上涨模式只避让未成交买单，允许盈利退出后再次参与趋势；震荡模式同时避让已有持仓，
+   * 防止在相近价格反复堆积小仓位。
+   */
   private isEntrySpacingAllowed(
     mode: StructureEmaMode,
     entryPrice: number,
@@ -688,6 +755,7 @@ export class StructureEmaSpotService {
     });
   }
 
+  /** 上涨入场距离最近上方日线关键位过近时不追买，给波段留出利润空间。 */
   private isKeyLevelDistanceAllowed(
     entryPrice: number,
     keyLevels: StrategyKeyLevel[],
@@ -704,6 +772,10 @@ export class StructureEmaSpotService {
     );
   }
 
+  /**
+   * 为满足退出条件的持仓挂限价卖单。
+   * 先按交易所价格精度归一化最低止盈价，再把同一价格的多个批次合并处理。
+   */
   private async placeExitOrders(
     strategy: StrategyRecord,
     holdings: ActiveSpotEmaTrade[],
@@ -749,6 +821,11 @@ export class StructureEmaSpotService {
     }
   }
 
+  /**
+   * 相同止盈价尚无卖单时，创建一个聚合卖单。
+   * 交易所创建成功后，再用事务把原 HOLDING 记录替换成一条 PENDING_SELL 记录；
+   * 如果数据库处理失败，则取消刚创建的交易所订单，避免两边失去对应关系。
+   */
   private async createAggregatedSellOrder(
     strategy: StrategyRecord,
     holdings: ActiveSpotEmaTrade[],
@@ -807,6 +884,10 @@ export class StructureEmaSpotService {
     }
   }
 
+  /**
+   * 相同止盈价已有卖单时，参考 grid-cash 直接扩大原交易所卖单数量。
+   * 交易所编辑成功后，再用事务把新持仓并入原 PENDING_SELL 记录，整个卖单只保留一个 orderId。
+   */
   private async editAggregatedSellOrder(
     strategy: StrategyRecord,
     existingSell: ActiveSpotEmaTrade,
@@ -875,6 +956,7 @@ export class StructureEmaSpotService {
     );
   }
 
+  /** 把交易所返回的字符串/数字字段统一校验并转换成策略内部使用的数值。 */
   private normalizeMarketInfo(value: unknown): MarketOrderInfo {
     const info = (value || {}) as Record<string, unknown>;
     return {
@@ -884,6 +966,7 @@ export class StructureEmaSpotService {
     };
   }
 
+  /** 解析并补全策略配置，同时执行周期、份数和比例等范围校验。 */
   private parseConfigJson(configJson?: string): StructureEmaSpotConfig {
     try {
       const parsed = configJson ? JSON.parse(configJson) : {};
@@ -928,6 +1011,10 @@ export class StructureEmaSpotService {
     });
   }
 
+  /**
+   * 创建策略前校验账户、交易对、配置和最小资金要求。
+   * 最小资金按上涨与震荡模式中更大的资金份数计算，保证最小的一份也能满足交易所限制。
+   */
   async start(
     dto: StartStructureEmaSpotDto,
     userId: number,
@@ -985,6 +1072,10 @@ export class StructureEmaSpotService {
     return ResponseDto.success('EMA结构现货策略启动成功');
   }
 
+  /**
+   * 停止策略并清除本地交易记录。
+   * 按当前产品约定，这里不取消交易所挂单，也不卖出现货，由用户自行处理交易所资产。
+   */
   async stop(strategyId: number, userId: number): Promise<ResponseDto<string>> {
     const strategy = await this.strategyRecordRepository.findOne({
       where: {
@@ -1003,6 +1094,7 @@ export class StructureEmaSpotService {
     return ResponseDto.success('EMA结构现货策略已停止');
   }
 
+  /** 更新总资金或策略配置；原持仓仍使用入场时保存的 EMA 参数等待退出。 */
   async edit(
     dto: EditStructureEmaSpotDto,
     userId: number,
@@ -1033,6 +1125,7 @@ export class StructureEmaSpotService {
     return ResponseDto.success('EMA结构现货策略配置已更新');
   }
 
+  /** 返回前端可编辑的默认值、参数范围和允许选择的 K 线周期。 */
   getStrategyConfig() {
     return {
       default: STRUCTURE_EMA_SPOT_DEFAULT_CONFIG,
