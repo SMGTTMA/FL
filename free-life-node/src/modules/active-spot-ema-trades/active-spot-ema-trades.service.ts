@@ -93,4 +93,84 @@ export class ActiveSpotEmaTradesService {
   async removeByStrategyRecordId(strategyRecordId: number): Promise<void> {
     await this.activeSpotEmaTradeRepository.delete({ strategyRecordId });
   }
+
+  async replaceHoldingsWithPendingSell(args: {
+    strategyRecordId: number;
+    holdingIds: number[];
+    pendingSell: DeepPartial<ActiveSpotEmaTrade>;
+  }): Promise<ActiveSpotEmaTrade> {
+    const holdingIds = [...new Set(args.holdingIds)];
+    if (!holdingIds.length) throw new Error('没有可聚合的持仓记录');
+
+    return await this.activeSpotEmaTradeRepository.manager.transaction(
+      async (manager) => {
+        const repository = manager.getRepository(ActiveSpotEmaTrade);
+        const holdings = await repository.find({
+          where: {
+            id: In(holdingIds),
+            strategyRecordId: args.strategyRecordId,
+            tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
+          },
+        });
+        if (holdings.length !== holdingIds.length) {
+          throw new Error('待聚合持仓已发生变化');
+        }
+
+        const pendingSell = repository.create({
+          ...args.pendingSell,
+          strategyRecordId: args.strategyRecordId,
+          tradeStatus: ActiveSpotEmaTradeStatus.PENDING_SELL,
+        });
+        const saved = await repository.save(pendingSell);
+        await repository.delete({ id: In(holdingIds) });
+        return saved;
+      },
+    );
+  }
+
+  async mergeHoldingsIntoPendingSell(args: {
+    strategyRecordId: number;
+    holdingIds: number[];
+    pendingSellId: number;
+    entryPrice: number;
+    tradeAmount: number;
+    positionCost: number;
+  }): Promise<ActiveSpotEmaTrade> {
+    const holdingIds = [...new Set(args.holdingIds)];
+    if (!holdingIds.length) throw new Error('没有可并入的持仓记录');
+
+    return await this.activeSpotEmaTradeRepository.manager.transaction(
+      async (manager) => {
+        const repository = manager.getRepository(ActiveSpotEmaTrade);
+        const [pendingSell, holdings] = await Promise.all([
+          repository.findOne({
+            where: {
+              id: args.pendingSellId,
+              strategyRecordId: args.strategyRecordId,
+              tradeStatus: ActiveSpotEmaTradeStatus.PENDING_SELL,
+            },
+          }),
+          repository.find({
+            where: {
+              id: In(holdingIds),
+              strategyRecordId: args.strategyRecordId,
+              tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
+            },
+          }),
+        ]);
+
+        if (!pendingSell) throw new Error('待编辑止盈卖单不存在');
+        if (holdings.length !== holdingIds.length) {
+          throw new Error('待并入持仓已发生变化');
+        }
+
+        pendingSell.entryPrice = args.entryPrice;
+        pendingSell.tradeAmount = args.tradeAmount;
+        pendingSell.positionCost = args.positionCost;
+        const saved = await repository.save(pendingSell);
+        await repository.delete({ id: In(holdingIds) });
+        return saved;
+      },
+    );
+  }
 }

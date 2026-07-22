@@ -25,6 +25,7 @@ import { PriceActionSpotModule } from './modules/price-action-spot/price-action-
 import { HistoricalBacktestModule } from './modules/historical-backtest/historical-backtest.module';
 import { StrategyStructuresModule } from './modules/strategy-structures/strategy-structures.module';
 import { StructureAlertsModule } from './modules/structure-alerts/structure-alerts.module';
+import { StructureEmaSpotModule } from './modules/structure-ema-spot/structure-ema-spot.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { StructureAlertsModule } from './modules/structure-alerts/structure-aler
     HistoricalBacktestModule,
     StrategyStructuresModule,
     StructureAlertsModule,
+    StructureEmaSpotModule,
   ],
   providers: [
     {

@@ -30,7 +30,7 @@ export class StrategyRecord {
   status: number;
 
   @Column({ name: 'stop_reason', length: 255, nullable: true })
-  stopReason: string;
+  stopReason: string | null;
 
   @Column({ name: 'user_id' })
   userId: number;
