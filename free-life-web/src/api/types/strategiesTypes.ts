@@ -35,6 +35,8 @@ export type StrategiesListItem = {
     exchangeConfigId: number;
     /** 总仓位大小 */
     totalPositionSize: number;
+    /** EMA结构策略最后一次读取到的日线方向 */
+    lastDirection?: string | null;
   };
   /** 最后执行时间 */
   lastExecutionTime: string | null;
@@ -186,4 +188,65 @@ export type GetPriceActionSpotStrategyConfigResponse = {
   min: ParsePriceActionSpotConfigJson;
   max: ParsePriceActionSpotConfigJson;
   timeframeOptions: string[];
+};
+
+/** EMA结构策略单个交易模式的配置。 */
+export type StructureEmaProfileConfig = {
+  /** 交易周期 */
+  timeframe: string;
+  /** EMA周期 */
+  emaPeriod: number;
+  /** 总资金拆分份数 */
+  positionParts: number;
+  /** 与已有订单的最小价格间距，小数形式 */
+  entrySpacingRate: number;
+  /** 买单保留的完整K线数量 */
+  entryOrderExpireBars: number;
+};
+
+/** EMA结构现货策略配置。 */
+export type StructureEmaSpotConfig = {
+  /** 最低盈利点，小数形式 */
+  profitPoint: number;
+  /** 上涨模式配置 */
+  up: StructureEmaProfileConfig & {
+    /** 距离上方关键位的最小距离，小数形式 */
+    keyLevelAvoidanceRate: number;
+  };
+  /** 震荡模式配置 */
+  range: StructureEmaProfileConfig;
+};
+
+export type StartStructureEmaSpotParams = {
+  symbol: string;
+  totalPositionSize: number;
+  exchangeConfigId: number | string;
+  configJson?: string;
+};
+
+export type EditStructureEmaSpotParams = {
+  strategyId: number;
+  totalPositionSize?: number;
+  configJson?: string;
+};
+
+type NumberLimit = {
+  min: number;
+  max: number;
+};
+
+export type GetStructureEmaSpotConfigResponse = {
+  default: StructureEmaSpotConfig;
+  limits: {
+    profitPoint: NumberLimit;
+    emaPeriod: NumberLimit;
+    positionParts: NumberLimit;
+    entrySpacingRate: NumberLimit;
+    keyLevelAvoidanceRate: NumberLimit;
+    entryOrderExpireBars: NumberLimit;
+  };
+  timeframes: {
+    up: string[];
+    range: string[];
+  };
 };

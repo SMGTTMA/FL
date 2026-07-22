@@ -12,6 +12,7 @@ import AiMarketMonitorLog from "@/pages/aiMarketMonitorLog/AiMarketMonitorLog";
 import HistoricalBacktest from "@/pages/historicalBacktest/HistoricalBacktest";
 import StructureAlerts from "@/pages/structureAlerts/StructureAlerts";
 import StrategyStructures from "@/pages/strategyStructures/StrategyStructures";
+import StructureEmaSpot from "@/pages/structureEmaSpot/StructureEmaSpot";
 
 export const routes: AppRouteObject[] = [
   {
@@ -28,6 +29,14 @@ export const routes: AppRouteObject[] = [
     meta: {
       label: "网格现货",
       key: "/gridCash",
+    },
+  },
+  {
+    path: "/structureEmaSpot",
+    element: <StructureEmaSpot />,
+    meta: {
+      label: "EMA结构现货",
+      key: "/structureEmaSpot",
     },
   },
   {

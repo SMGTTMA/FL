@@ -12,6 +12,9 @@ import {
   StartPriceActionSpotParams,
   EditPriceActionSpotParams,
   GetPriceActionSpotStrategyConfigResponse,
+  StartStructureEmaSpotParams,
+  EditStructureEmaSpotParams,
+  GetStructureEmaSpotConfigResponse,
 } from "../types/strategiesTypes";
 
 /** martinGridCashV1 开启策略 */
@@ -135,4 +138,35 @@ export const editPriceActionSpotStrategy = (
 export const getPriceActionSpotStrategyConfig = () =>
   apiClient.post<GetPriceActionSpotStrategyConfigResponse>({
     url: "/strategies/priceActionSpot/getConfig",
+  });
+
+/** EMA结构现货策略开启 */
+export const startStructureEmaSpotStrategy = (
+  data: StartStructureEmaSpotParams,
+) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/start",
+    data,
+  });
+
+/** EMA结构现货策略停止 */
+export const stopStructureEmaSpotStrategy = (data: { strategyId: number }) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/stop",
+    data,
+  });
+
+/** EMA结构现货策略编辑 */
+export const editStructureEmaSpotStrategy = (
+  data: EditStructureEmaSpotParams,
+) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/edit",
+    data,
+  });
+
+/** EMA结构现货策略默认配置和参数范围 */
+export const getStructureEmaSpotStrategyConfig = () =>
+  apiClient.post<GetStructureEmaSpotConfigResponse>({
+    url: "/strategies/structureEmaSpot/getConfig",
   });
