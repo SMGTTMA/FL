@@ -689,6 +689,7 @@ export class PriceActionSpotService {
       strategyRecord.symbol = dto.symbol;
       strategyRecord.totalPositionSize = totalPositionSize;
       strategyRecord.status = 1;
+      strategyRecord.side = OrderSide.BUY;
       strategyRecord.userId = userId;
       strategyRecord.exchangeConfigId = dto.exchangeConfigId;
       strategyRecord.parameters = dto;

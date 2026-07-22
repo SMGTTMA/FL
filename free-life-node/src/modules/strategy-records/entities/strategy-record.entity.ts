@@ -50,7 +50,7 @@ export class StrategyRecord {
   @Column('int', { nullable: true })
   leverage?: number;
 
-  @Column({ name: 'side', type: 'enum', enum: OrderSide, nullable: true })
+  @Column({ name: 'side', type: 'enum', enum: OrderSide })
   side: OrderSide;
 
   @Column({

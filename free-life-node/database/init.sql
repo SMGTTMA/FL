@@ -199,6 +199,35 @@ CREATE TABLE IF NOT EXISTS active_spot_martin_trades (
     FOREIGN KEY (exchange_config_id) REFERENCES exchange_configs(id)
 );
 
+-- 活跃的现货 EMA 波段交易记录表（已完成的卖单会删除）
+CREATE TABLE IF NOT EXISTS active_spot_ema_trades (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    strategy_record_id INT NOT NULL,              -- 关联的策略记录ID
+    user_id INT NOT NULL,                         -- 关联用户ID
+    exchange_config_id INT NOT NULL,              -- 关联交易所配置ID
+    symbol VARCHAR(20) NOT NULL,                   -- 交易对，如 BTC/USDT
+    source_mode ENUM('UP', 'RANGE') NULL,          -- 入场来源；聚合卖单可以为空
+    signal_timeframe VARCHAR(10) NULL,             -- 入场信号周期；聚合卖单可以为空
+    ema_period INT NULL,                           -- 入场使用的EMA周期；聚合卖单可以为空
+    signal_kline_time BIGINT NULL,                 -- 入场信号K线时间戳（毫秒）
+    entry_price DECIMAL(20,8) NOT NULL,            -- 入场价；聚合卖单保存加权平均入场价
+    take_profit_price DECIMAL(20,8) NOT NULL,      -- 最低止盈价
+    trade_amount DECIMAL(20,8) NOT NULL,           -- 基础币数量
+    position_cost DECIMAL(20,8) NOT NULL,          -- 占用的计价币资金；聚合卖单保存总和
+    trade_status ENUM('PENDING_BUY', 'HOLDING', 'PENDING_SELL') NOT NULL,
+    order_id VARCHAR(100) NULL,                    -- 当前交易所订单ID；HOLDING时为空
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_active_spot_ema_signal (strategy_record_id, source_mode, signal_kline_time),
+    UNIQUE KEY uk_active_spot_ema_order (exchange_config_id, order_id),
+    INDEX idx_active_spot_ema_strategy_status (strategy_record_id, trade_status),
+    INDEX idx_active_spot_ema_context (user_id, exchange_config_id, symbol),
+    INDEX idx_active_spot_ema_take_profit (strategy_record_id, trade_status, take_profit_price),
+    FOREIGN KEY (strategy_record_id) REFERENCES strategy_records(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (exchange_config_id) REFERENCES exchange_configs(id)
+);
+
 -- 被拒绝的订单记录表
 CREATE TABLE IF NOT EXISTS rejected_orders (
     id INT PRIMARY KEY AUTO_INCREMENT,

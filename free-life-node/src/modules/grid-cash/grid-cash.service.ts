@@ -789,6 +789,7 @@ export class GridCashService {
       strategyRecord.symbol = symbol;
       strategyRecord.totalPositionSize = totalPositionSize;
       strategyRecord.status = 1;
+      strategyRecord.side = OrderSide.BUY;
       strategyRecord.userId = userId;
       strategyRecord.exchangeConfigId = exchangeConfigId;
       strategyRecord.parameters = startGridDto;

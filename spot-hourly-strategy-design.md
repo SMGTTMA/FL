@@ -27,11 +27,11 @@
 
 ## 3. 日线剧本
 
-- 策略记录 **lastHandledStructureUpdatedAt**，与 strategy-structures 的更新时间比较，判断人工剧本是否已经处理。
+- 将 D1 方向和普通关键位按固定顺序序列化并计算 **structureSnapshotHash**，与 strategy-records.parameters 中的已处理哈希比较。
 - 订单和持仓不记录剧本版本。
 - 剧本更新后，取消全部未成交买单并删除对应本地入场记录；已挂出的卖单不取消。
 - 已成交仓位继续按照其来源模式监听 EMA 出场信号。
-- 完成切换处理后更新 **lastHandledStructureUpdatedAt**。
+- 完成切换处理后保存新的 **structureSnapshotHash**；新增、修改或删除关键位都能触发变化。
 - UP_CHANNEL 缺少通道线时按普通 UP 处理。
 - RANGE 不要求人工提供上沿和下沿。
 - 系统最多在 5 分钟内响应人工方向变化；新入场仍等待对应模式的完整 EMA 信号。
@@ -57,14 +57,17 @@
 - 策略主动撤销买单时，必须同步删除本地入场记录，避免被误判为成交。
 - 订单幂等键至少包含：策略 ID、来源模式、K线时间、买卖方向和批次 ID。
 - 策略只管理自身订单标识和本地记录的数量，不主动使用手工持仓。
-- 每笔持仓至少保存来源模式、信号周期、EMA周期、开仓价、最低止盈价、数量、买卖方向和订单 ID。
+- 本地状态依次为 **PENDING_BUY → HOLDING → PENDING_SELL**；HOLDING 没有交易所订单 ID。
+- PENDING_BUY 和 HOLDING 分别保存来源模式、信号周期、EMA周期、信号K线时间、开仓价、最低止盈价、数量和占用资金。
+- 一个非空交易所订单 ID 只对应一条本地记录。
 
 止盈卖单统一合并规则：
 
 - 同一策略、交易所配置和交易对中，经交易所价格精度处理后止盈价相同的批次，合并为一个卖单；UP 和 RANGE 仓位统一适用。
-- 交易所卖单数量为全部关联批次数量之和，本地仍分别保留每个批次及其来源模式。
-- 后续产生相同止盈价的批次时，编辑已有卖单数量，不重复创建卖单。
-- 合并卖单不在 openOrders 后，所有关联批次都认为已经卖出并删除本地记录。
+- 没有对应卖单时，数量和占用资金分别求和，入场价按数量加权；交易所创建成功后，删除原 HOLDING 记录并创建一条聚合的 PENDING_SELL 记录。
+- 已有对应卖单时，编辑交易所卖单数量；编辑成功后删除新并入的 HOLDING 记录，并更新原 PENDING_SELL 的数量、占用资金和加权入场价。
+- 聚合后不再保留各原始批次的独立记录，也不让多条本地记录共享 order ID。
+- PENDING_SELL 不在 openOrders 后认为已经卖出，删除这一条本地记录并释放其全部占用资金。
 
 ## 5. 资金和最低盈利
 
@@ -182,7 +185,7 @@ currentClose    > currentOpen
 
 ## 7. 方向和计划切换
 
-系统发现 strategy-structures 的更新时间不同于 **lastHandledStructureUpdatedAt** 时立即处理：
+系统发现当前 **structureSnapshotHash** 与已处理哈希不同时立即处理：
 
 - 取消全部未成交买单，并同步删除对应本地入场记录。
 - 已挂出的卖单继续等待，不取消、不改价。
@@ -191,7 +194,7 @@ currentClose    > currentOpen
 - 新方向为 UP / UP_CHANNEL 时，启用 UP 参数并等待下一次完整开仓信号。
 - 新方向为 RANGE 时，启用 RANGE 参数并等待下一次完整开仓信号。
 - 新方向为 DOWN / DOWN_CHANNEL 时禁止新开仓。
-- 处理完成后更新 **lastHandledStructureUpdatedAt**。
+- 处理完成后保存新的 **structureSnapshotHash**。
 
 ## 8. 停止与重启
 
@@ -206,7 +209,7 @@ currentClose    > currentOpen
 
 读取本地记录和当前策略 openOrders：
 
-- 先比较 strategy-structures 更新时间和 **lastHandledStructureUpdatedAt**，补做未处理的剧本切换。
+- 先计算并比较 **structureSnapshotHash**，补做未处理的剧本切换。
 - 本地订单仍在 openOrders：继续等待。
 - 本地买单不在 openOrders：认为已经买入。
 - 本地卖单不在 openOrders：认为已经卖出并删除记录。

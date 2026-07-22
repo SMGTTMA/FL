@@ -14,6 +14,7 @@ import {
   KlineEnv,
 } from '@/modules/kline-cache/kline-cache.service';
 import { TimeFrame } from '@/modules/exchange/dto/history.dto';
+import { OrderSide } from '@/modules/exchange/dto/place-order.dto';
 import { ExceptionLogService } from '@/modules/exception-log/exception-log.service';
 import { StrategyRecord } from '@/modules/strategy-records/entities/strategy-record.entity';
 import { StrategyEnvService } from '@/modules/strategy-utils/strategy-env.service';
@@ -131,6 +132,7 @@ export class IndicatorSignalService implements OnModuleInit {
     watchRecord.exchangeConfigId = exchangeConfigId;
     watchRecord.userId = userId;
     watchRecord.status = 1;
+    watchRecord.side = OrderSide.BUY;
     watchRecord.totalPositionSize = 0;
     watchRecord.isTradingStrategy = 0;
 

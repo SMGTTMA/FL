@@ -12,6 +12,7 @@ import { StrategyRecordsModule } from './modules/strategy-records/strategy-recor
 import { APP_FILTER } from '@nestjs/core';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ActiveSpotMartinTradesModule } from './modules/active-spot-martin-trades/active-spot-martin-trades.module';
+import { ActiveSpotEmaTradesModule } from './modules/active-spot-ema-trades/active-spot-ema-trades.module';
 
 import { RejectedOrdersModule } from './modules/rejected-orders/rejected-orders.module';
 import { GridCashModule } from './modules/grid-cash/grid-cash.module';
@@ -49,6 +50,7 @@ import { StructureAlertsModule } from './modules/structure-alerts/structure-aler
     ExceptionLogModule,
     StrategyRecordsModule,
     ActiveSpotMartinTradesModule,
+    ActiveSpotEmaTradesModule,
     RejectedOrdersModule,
     GridCashModule,
     IndicatorSignalModule,
