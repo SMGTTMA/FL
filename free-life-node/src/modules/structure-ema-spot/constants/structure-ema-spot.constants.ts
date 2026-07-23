@@ -52,4 +52,5 @@ export const STRUCTURE_EMA_SPOT_DEFAULT_RUNTIME: StructureEmaRuntimeState = {
   lastDirection: null,
   lastProcessedKlineTime: {},
   brokenKeyLevelIds: [],
+  entryPaused: false,
 };

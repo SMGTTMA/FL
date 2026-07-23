@@ -7,7 +7,9 @@ import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import dayjs from "dayjs";
 import { useState } from "react";
 import { AddOrEditStructureEmaSpot } from "./components/addOrEditStructureEmaSpot/AddOrEditStructureEmaSpot";
+import { ManageStructureEmaTrades } from "./components/manageStructureEmaTrades/ManageStructureEmaTrades";
 import { StopStructureEmaSpot } from "./components/stopStructureEmaSpot/StopStructureEmaSpot";
+import { ToggleStructureEmaEntry } from "./components/toggleStructureEmaEntry/ToggleStructureEmaEntry";
 
 const PAGE_SIZE = 10;
 
@@ -65,15 +67,21 @@ const StructureEmaSpot = () => {
 			title: "状态",
 			dataIndex: "status",
 			key: "status",
-			width: 90,
-			render: (status: number, record) =>
-				status === StrategyStatusEnum.RUNNING ? (
-					<Tag color="green">运行中</Tag>
-				) : (
+			width: 110,
+			render: (status: number, record) => {
+				if (status === StrategyStatusEnum.RUNNING) {
+					return record.parameters?.entryPaused ? (
+						<Tag color="orange">开仓已暂停</Tag>
+					) : (
+						<Tag color="green">运行中</Tag>
+					);
+				}
+				return (
 					<Tooltip title={record.stopReason || "已停止"}>
 						<Tag color="red">已停止</Tag>
 					</Tooltip>
-				),
+				);
+			},
 		},
 		{
 			title: "日线方向",
@@ -90,7 +98,7 @@ const StructureEmaSpot = () => {
 			title: "总资金(USDT)",
 			dataIndex: "totalPositionSize",
 			key: "totalPositionSize",
-			width: 130,
+			width: 340,
 			render: (value: string) => Number(value).toFixed(2),
 		},
 		{
@@ -179,7 +187,13 @@ const StructureEmaSpot = () => {
 			render: (_, record) => {
 				if (record.status !== StrategyStatusEnum.RUNNING) return "-";
 				return (
-					<Space>
+					<Space size={0}>
+						<ManageStructureEmaTrades strategyId={record.id} symbol={record.symbol} onSuccess={refresh} />
+						<ToggleStructureEmaEntry
+							strategyId={record.id}
+							paused={record.parameters?.entryPaused === true}
+							onSuccess={refresh}
+						/>
 						<AddOrEditStructureEmaSpot type="edit" record={record} onSuccess={refresh} />
 						<StopStructureEmaSpot strategyId={record.id} onSuccess={refresh} />
 					</Space>
@@ -212,7 +226,7 @@ const StructureEmaSpot = () => {
 					showTotal: (total) => `共 ${total} 条`,
 				}}
 				onChange={handleTableChange}
-				scroll={{ x: 1900, y: "calc(100vh - 300px)" }}
+				scroll={{ x: 2120, y: "calc(100vh - 300px)" }}
 			/>
 		</div>
 	);

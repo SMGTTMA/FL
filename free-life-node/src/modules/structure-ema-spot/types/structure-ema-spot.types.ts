@@ -25,6 +25,7 @@ export interface StructureEmaRuntimeState {
   lastDirection: StrategyMarketDirectionType | null;
   lastProcessedKlineTime: Record<string, number>;
   brokenKeyLevelIds: number[];
+  entryPaused: boolean;
 }
 
 export interface EmaSignalContext {

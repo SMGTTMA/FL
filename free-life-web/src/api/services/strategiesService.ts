@@ -15,6 +15,8 @@ import {
   StartStructureEmaSpotParams,
   EditStructureEmaSpotParams,
   GetStructureEmaSpotConfigResponse,
+  ActiveSpotEmaTrade,
+  ManualExitStructureEmaSpotParams,
 } from "../types/strategiesTypes";
 
 /** martinGridCashV1 开启策略 */
@@ -169,4 +171,34 @@ export const editStructureEmaSpotStrategy = (
 export const getStructureEmaSpotStrategyConfig = () =>
   apiClient.post<GetStructureEmaSpotConfigResponse>({
     url: "/strategies/structureEmaSpot/getConfig",
+  });
+
+/** 查询EMA结构现货策略的当前交易记录 */
+export const getStructureEmaSpotTrades = (data: { strategyId: number }) =>
+  apiClient.post<ActiveSpotEmaTrade[]>({
+    url: "/strategies/structureEmaSpot/trades",
+    data,
+  });
+
+/** 暂停EMA结构现货策略创建新买单 */
+export const pauseStructureEmaSpotEntry = (data: { strategyId: number }) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/pauseEntry",
+    data,
+  });
+
+/** 恢复EMA结构现货策略创建新买单 */
+export const resumeStructureEmaSpotEntry = (data: { strategyId: number }) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/resumeEntry",
+    data,
+  });
+
+/** 按指定价格手动退出选中的EMA策略持仓 */
+export const manualExitStructureEmaSpot = (
+  data: ManualExitStructureEmaSpotParams,
+) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/manualExit",
+    data,
   });

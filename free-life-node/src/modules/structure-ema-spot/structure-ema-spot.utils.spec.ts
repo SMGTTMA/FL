@@ -85,11 +85,17 @@ describe('structure-ema-spot.utils', () => {
         invalid: 'abc',
       },
       brokenKeyLevelIds: ['1', 2, 'bad'],
+      entryPaused: true,
     });
 
     expect(runtime.lastDirection).toBe('RANGE');
     expect(Object.values(runtime.lastProcessedKlineTime)).toEqual([123]);
     expect(runtime.brokenKeyLevelIds).toEqual([1, 2]);
+    expect(runtime.entryPaused).toBe(true);
+  });
+
+  it('未设置暂停状态时默认允许开仓', () => {
+    expect(parseStructureEmaRuntimeState(null).entryPaused).toBe(false);
   });
 
   it('同一根K线只处理一次', () => {

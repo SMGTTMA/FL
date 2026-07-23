@@ -44,6 +44,7 @@ import {
 } from './constants/structure-ema-spot.constants';
 import { EditStructureEmaSpotDto } from './dto/edit-structure-ema-spot.dto';
 import { StartStructureEmaSpotDto } from './dto/start-structure-ema-spot.dto';
+import { ManualExitStructureEmaSpotDto } from './dto/operate-structure-ema-spot.dto';
 import {
   EmaSignalContext,
   StructureEmaMode,
@@ -90,6 +91,7 @@ export class StructureEmaSpotService {
   private readonly logger = new Logger(StructureEmaSpotService.name);
   private readonly strategyName = STRUCTURE_EMA_SPOT_STRATEGY_NAME;
   private readonly quoteAsset = 'USDT';
+  private readonly strategyOperationChains = new Map<number, Promise<void>>();
 
   constructor(
     @InjectRepository(StrategyRecord)
@@ -131,7 +133,20 @@ export class StructureEmaSpotService {
             ) as KlineEnv;
             if (!env) throw new Error('无法确定策略运行环境');
 
-            await this.executeStrategy(strategy, env, now);
+            await this.withStrategyLock(strategy.id, async () => {
+              // 策略列表在加锁前读取，等待人工操作期间 parameters 可能已经变化，
+              // 因此进入锁后必须重新读取，避免旧状态覆盖暂停开仓等人工设置。
+              const latestStrategy =
+                await this.strategyRecordRepository.findOne({
+                  where: {
+                    id: strategy.id,
+                    strategyName: this.strategyName,
+                    status: 1,
+                  },
+                });
+              if (!latestStrategy) return;
+              await this.executeStrategy(latestStrategy, env, now);
+            });
           } catch (error) {
             await this.recordException(
               'cronjob/executeStructureEmaSpotStrategies/single',
@@ -152,6 +167,32 @@ export class StructureEmaSpotService {
         null,
       );
       this.logger.error('EMA结构策略批量执行失败', error);
+    }
+  }
+
+  /**
+   * 同一策略的定时任务和人工操作按调用顺序串行执行，防止双方同时覆盖 parameters
+   * 或同时处理同一批 HOLDING。当前系统为单实例运行，因此进程内按策略 ID 加锁即可。
+   */
+  private async withStrategyLock<T>(
+    strategyId: number,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous =
+      this.strategyOperationChains.get(strategyId) || Promise.resolve();
+    const running = previous.catch(() => undefined).then(operation);
+    const marker = running.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.strategyOperationChains.set(strategyId, marker);
+
+    try {
+      return await running;
+    } finally {
+      if (this.strategyOperationChains.get(strategyId) === marker) {
+        this.strategyOperationChains.delete(strategyId);
+      }
     }
   }
 
@@ -214,7 +255,7 @@ export class StructureEmaSpotService {
       keyLevels: snapshot.keyLevels,
       marketInfo,
       // 剧本变化当轮只处理旧订单和运行状态，从下一根新收盘 K 线开始入场。
-      allowEntry: !structureChanged,
+      allowEntry: !structureChanged && !runtime.entryPaused,
     });
 
     strategy.parameters = runtime;
@@ -822,6 +863,49 @@ export class StructureEmaSpotService {
   }
 
   /**
+   * 按用户指定价格退出选中的持仓，不校验自动策略的最低盈利条件。
+   * 相同价格已经存在卖单时继续合并到原卖单，否则创建新的聚合卖单。
+   */
+  private async placeManualExitOrder(
+    strategy: StrategyRecord,
+    holdings: ActiveSpotEmaTrade[],
+    exitPrice: number,
+    marketInfo: MarketOrderInfo,
+  ): Promise<boolean> {
+    const normalizedExitPrice = roundUpPrice({
+      price: toFinitePositiveNumber(exitPrice, '手动出场价格'),
+      precision: marketInfo.precisionPrice,
+    });
+    const aggregate = aggregateEmaTrades(holdings, marketInfo.stepLength);
+    if (aggregate.tradeAmount < marketInfo.minSz) {
+      throw new BadRequestException(
+        `卖出数量不能低于交易所最小数量 ${marketInfo.minSz}`,
+      );
+    }
+
+    const existingSell =
+      await this.activeSpotEmaTradesService.findPendingSellByTakeProfitPrice({
+        strategyRecordId: strategy.id,
+        takeProfitPrice: normalizedExitPrice,
+      });
+    if (existingSell) {
+      return await this.editAggregatedSellOrder(
+        strategy,
+        existingSell,
+        holdings,
+        marketInfo,
+      );
+    }
+
+    return await this.createAggregatedSellOrder(
+      strategy,
+      holdings,
+      normalizedExitPrice,
+      marketInfo,
+    );
+  }
+
+  /**
    * 相同止盈价尚无卖单时，创建一个聚合卖单。
    * 交易所创建成功后，再用事务把原 HOLDING 记录替换成一条 PENDING_SELL 记录；
    * 如果数据库处理失败，则取消刚创建的交易所订单，避免两边失去对应关系。
@@ -831,7 +915,7 @@ export class StructureEmaSpotService {
     holdings: ActiveSpotEmaTrade[],
     takeProfitPrice: number,
     marketInfo: MarketOrderInfo,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const aggregate = aggregateEmaTrades(holdings, marketInfo.stepLength);
     const order: PlaceOrderDto = {
       symbol: strategy.symbol,
@@ -852,7 +936,7 @@ export class StructureEmaSpotService {
         order,
         '止盈卖单创建失败',
       );
-      return;
+      return false;
     }
 
     try {
@@ -874,6 +958,7 @@ export class StructureEmaSpotService {
           orderId: String(created.id),
         },
       });
+      return true;
     } catch (error) {
       await this.exchangeService.batchCancelOrders(
         strategy.exchangeConfigId,
@@ -893,7 +978,7 @@ export class StructureEmaSpotService {
     existingSell: ActiveSpotEmaTrade,
     holdings: ActiveSpotEmaTrade[],
     marketInfo: MarketOrderInfo,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!existingSell.orderId) throw new Error('聚合止盈单缺少订单ID');
 
     const aggregate = aggregateEmaTrades(
@@ -925,7 +1010,7 @@ export class StructureEmaSpotService {
         },
         '止盈卖单编辑失败',
       );
-      return;
+      return false;
     }
 
     await this.activeSpotEmaTradesService.mergeHoldingsIntoPendingSell({
@@ -936,6 +1021,7 @@ export class StructureEmaSpotService {
       tradeAmount: aggregate.tradeAmount,
       positionCost: aggregate.positionCost,
     });
+    return true;
   }
 
   private getProfile(
@@ -1011,6 +1097,176 @@ export class StructureEmaSpotService {
     });
   }
 
+  private async findRunningStrategy(
+    strategyId: number,
+    userId: number,
+  ): Promise<StrategyRecord> {
+    const strategy = await this.strategyRecordRepository.findOne({
+      where: {
+        id: strategyId,
+        userId,
+        status: 1,
+        strategyName: this.strategyName,
+      },
+    });
+    if (!strategy) throw new BadRequestException('未找到运行中的策略');
+    return strategy;
+  }
+
+  /** 同步交易所订单后返回策略当前全部交易记录。 */
+  async listTrades(
+    strategyId: number,
+    userId: number,
+  ): Promise<ResponseDto<ActiveSpotEmaTrade[]>> {
+    return await this.withStrategyLock(strategyId, async () => {
+      const strategy = await this.findRunningStrategy(strategyId, userId);
+      const config = this.parseConfigJson(strategy.configJson);
+      const openOrdersRes = await this.exchangeService.fetchOpenOrders(
+        strategy.exchangeConfigId,
+        strategy.symbol,
+      );
+      await this.syncOrderStates(
+        strategy,
+        config,
+        openOrdersRes?.data || [],
+        Date.now(),
+      );
+
+      const trades =
+        await this.activeSpotEmaTradesService.findByStrategyRecordId(
+          strategy.id,
+        );
+      return ResponseDto.success(trades);
+    });
+  }
+
+  /** 暂停新入场并立即取消所有仍在交易所挂着的买单。 */
+  async pauseEntry(
+    strategyId: number,
+    userId: number,
+  ): Promise<ResponseDto<string>> {
+    return await this.withStrategyLock(strategyId, async () => {
+      const strategy = await this.findRunningStrategy(strategyId, userId);
+      const runtime = parseStructureEmaRuntimeState(strategy.parameters);
+      runtime.entryPaused = true;
+      strategy.parameters = runtime;
+      await this.strategyRecordRepository.save(strategy);
+
+      const config = this.parseConfigJson(strategy.configJson);
+      const openOrdersRes = await this.exchangeService.fetchOpenOrders(
+        strategy.exchangeConfigId,
+        strategy.symbol,
+      );
+      await this.syncOrderStates(
+        strategy,
+        config,
+        openOrdersRes?.data || [],
+        Date.now(),
+      );
+      const trades =
+        await this.activeSpotEmaTradesService.findByStrategyRecordId(
+          strategy.id,
+        );
+      await this.cancelPendingBuyTrades(
+        strategy,
+        trades.filter(
+          (item) => item.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_BUY,
+        ),
+      );
+
+      return ResponseDto.success('已暂停创建新买单');
+    });
+  }
+
+  /** 恢复新入场；暂停期间的旧 K 线不会被补做。 */
+  async resumeEntry(
+    strategyId: number,
+    userId: number,
+  ): Promise<ResponseDto<string>> {
+    return await this.withStrategyLock(strategyId, async () => {
+      const strategy = await this.findRunningStrategy(strategyId, userId);
+      const runtime = parseStructureEmaRuntimeState(strategy.parameters);
+      runtime.entryPaused = false;
+      strategy.parameters = runtime;
+      await this.strategyRecordRepository.save(strategy);
+      return ResponseDto.success('已恢复创建新买单');
+    });
+  }
+
+  /**
+   * 将用户选择的 HOLDING 按指定价格合并挂出卖单。
+   * 手动出场允许亏损卖出，并会取消当前全部待买单，避免旧信号随后成交。
+   */
+  async manualExit(
+    dto: ManualExitStructureEmaSpotDto,
+    userId: number,
+  ): Promise<ResponseDto<string>> {
+    return await this.withStrategyLock(dto.strategyId, async () => {
+      const strategy = await this.findRunningStrategy(dto.strategyId, userId);
+      const config = this.parseConfigJson(strategy.configJson);
+      const [openOrdersRes, marketInfoRes] = await Promise.all([
+        this.exchangeService.fetchOpenOrders(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+        this.exchangeService.fetchMarketMinOrderInfo(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+      ]);
+      const marketInfo = this.normalizeMarketInfo(marketInfoRes?.data);
+      await this.syncOrderStates(
+        strategy,
+        config,
+        openOrdersRes?.data || [],
+        Date.now(),
+      );
+
+      const trades =
+        await this.activeSpotEmaTradesService.findByStrategyRecordId(
+          strategy.id,
+        );
+      const selectedIds = new Set(dto.tradeIds.map(Number));
+      const holdings = trades.filter((item) => selectedIds.has(item.id));
+      if (
+        holdings.length !== selectedIds.size ||
+        holdings.some(
+          (item) => item.tradeStatus !== ActiveSpotEmaTradeStatus.HOLDING,
+        )
+      ) {
+        throw new BadRequestException('选择的持仓已发生变化，请刷新后重试');
+      }
+
+      const success = await this.placeManualExitOrder(
+        strategy,
+        holdings,
+        dto.exitPrice,
+        marketInfo,
+      );
+      if (!success) throw new BadRequestException('手动出场卖单创建失败');
+
+      const refreshed =
+        await this.activeSpotEmaTradesService.findByStrategyRecordId(
+          strategy.id,
+        );
+      await this.cancelPendingBuyTrades(
+        strategy,
+        refreshed.filter(
+          (item) => item.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_BUY,
+        ),
+      );
+
+      if (dto.pauseEntry === true) {
+        const runtime = parseStructureEmaRuntimeState(strategy.parameters);
+        runtime.entryPaused = true;
+        strategy.parameters = runtime;
+        await this.strategyRecordRepository.save(strategy);
+      }
+
+      return ResponseDto.success('手动出场卖单已创建');
+    });
+  }
+
   /**
    * 创建策略前校验账户、交易对、配置和最小资金要求。
    * 最小资金按上涨与震荡模式中更大的资金份数计算，保证最小的一份也能满足交易所限制。
@@ -1077,21 +1333,16 @@ export class StructureEmaSpotService {
    * 按当前产品约定，这里不取消交易所挂单，也不卖出现货，由用户自行处理交易所资产。
    */
   async stop(strategyId: number, userId: number): Promise<ResponseDto<string>> {
-    const strategy = await this.strategyRecordRepository.findOne({
-      where: {
-        id: strategyId,
-        userId,
-        status: 1,
-        strategyName: this.strategyName,
-      },
+    return await this.withStrategyLock(strategyId, async () => {
+      const strategy = await this.findRunningStrategy(strategyId, userId);
+      await this.activeSpotEmaTradesService.removeByStrategyRecordId(
+        strategy.id,
+      );
+      strategy.status = 0;
+      strategy.stopReason = '用户手动停止';
+      await this.strategyRecordRepository.save(strategy);
+      return ResponseDto.success('EMA结构现货策略已停止');
     });
-    if (!strategy) throw new BadRequestException('未找到运行中的策略');
-
-    await this.activeSpotEmaTradesService.removeByStrategyRecordId(strategy.id);
-    strategy.status = 0;
-    strategy.stopReason = '用户手动停止';
-    await this.strategyRecordRepository.save(strategy);
-    return ResponseDto.success('EMA结构现货策略已停止');
   }
 
   /** 更新总资金或策略配置；原持仓仍使用入场时保存的 EMA 参数等待退出。 */
@@ -1099,30 +1350,24 @@ export class StructureEmaSpotService {
     dto: EditStructureEmaSpotDto,
     userId: number,
   ): Promise<ResponseDto<string>> {
-    const strategy = await this.strategyRecordRepository.findOne({
-      where: {
-        id: dto.strategyId,
-        userId,
-        status: 1,
-        strategyName: this.strategyName,
-      },
-    });
-    if (!strategy) throw new BadRequestException('未找到运行中的策略');
+    return await this.withStrategyLock(dto.strategyId, async () => {
+      const strategy = await this.findRunningStrategy(dto.strategyId, userId);
 
-    if (dto.configJson !== undefined) {
-      strategy.configJson = JSON.stringify(
-        this.parseConfigJson(dto.configJson),
-      );
-    }
-    if (dto.totalPositionSize !== undefined) {
-      const totalPositionSize = Number(dto.totalPositionSize);
-      if (!Number.isFinite(totalPositionSize) || totalPositionSize <= 0) {
-        throw new BadRequestException('策略总资金必须大于0');
+      if (dto.configJson !== undefined) {
+        strategy.configJson = JSON.stringify(
+          this.parseConfigJson(dto.configJson),
+        );
       }
-      strategy.totalPositionSize = totalPositionSize;
-    }
-    await this.strategyRecordRepository.save(strategy);
-    return ResponseDto.success('EMA结构现货策略配置已更新');
+      if (dto.totalPositionSize !== undefined) {
+        const totalPositionSize = Number(dto.totalPositionSize);
+        if (!Number.isFinite(totalPositionSize) || totalPositionSize <= 0) {
+          throw new BadRequestException('策略总资金必须大于0');
+        }
+        strategy.totalPositionSize = totalPositionSize;
+      }
+      await this.strategyRecordRepository.save(strategy);
+      return ResponseDto.success('EMA结构现货策略配置已更新');
+    });
   }
 
   /** 返回前端可编辑的默认值、参数范围和允许选择的 K 线周期。 */

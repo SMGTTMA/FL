@@ -181,6 +181,7 @@ export function parseStructureEmaRuntimeState(
     lastDirection,
     lastProcessedKlineTime,
     brokenKeyLevelIds,
+    entryPaused: raw.entryPaused === true,
   };
 }
 

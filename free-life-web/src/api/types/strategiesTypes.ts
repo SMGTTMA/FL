@@ -37,6 +37,8 @@ export type StrategiesListItem = {
     totalPositionSize: number;
     /** EMA结构策略最后一次读取到的日线方向 */
     lastDirection?: string | null;
+    /** EMA结构策略是否暂停创建新买单 */
+    entryPaused?: boolean;
   };
   /** 最后执行时间 */
   lastExecutionTime: string | null;
@@ -249,4 +251,33 @@ export type GetStructureEmaSpotConfigResponse = {
     up: string[];
     range: string[];
   };
+};
+
+export type ActiveSpotEmaTradeStatus =
+  | "PENDING_BUY"
+  | "HOLDING"
+  | "PENDING_SELL";
+
+export type ActiveSpotEmaTrade = {
+  id: number;
+  strategyRecordId: number;
+  sourceMode: "UP" | "RANGE" | null;
+  signalTimeframe: string | null;
+  emaPeriod: number | null;
+  signalKlineTime: string | number | null;
+  entryPrice: string | number;
+  takeProfitPrice: string | number;
+  tradeAmount: string | number;
+  positionCost: string | number;
+  tradeStatus: ActiveSpotEmaTradeStatus;
+  orderId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ManualExitStructureEmaSpotParams = {
+  strategyId: number;
+  tradeIds: number[];
+  exitPrice: number;
+  pauseEntry?: boolean;
 };

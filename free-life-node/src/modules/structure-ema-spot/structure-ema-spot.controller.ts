@@ -4,6 +4,10 @@ import { User } from '@/modules/user/entities/user.entity';
 import { EditStructureEmaSpotDto } from './dto/edit-structure-ema-spot.dto';
 import { StartStructureEmaSpotDto } from './dto/start-structure-ema-spot.dto';
 import { StopStructureEmaSpotDto } from './dto/stop-structure-ema-spot.dto';
+import {
+  ManualExitStructureEmaSpotDto,
+  OperateStructureEmaSpotDto,
+} from './dto/operate-structure-ema-spot.dto';
 import { StructureEmaSpotService } from './structure-ema-spot.service';
 
 @Controller('strategies/structureEmaSpot')
@@ -33,5 +37,46 @@ export class StructureEmaSpotController {
   @Post('getConfig')
   getConfig() {
     return this.structureEmaSpotService.getStrategyConfig();
+  }
+
+  @Post('trades')
+  async listTrades(
+    @CurrentUser() user: User,
+    @Body() dto: OperateStructureEmaSpotDto,
+  ) {
+    return await this.structureEmaSpotService.listTrades(
+      dto.strategyId,
+      user.id,
+    );
+  }
+
+  @Post('pauseEntry')
+  async pauseEntry(
+    @CurrentUser() user: User,
+    @Body() dto: OperateStructureEmaSpotDto,
+  ) {
+    return await this.structureEmaSpotService.pauseEntry(
+      dto.strategyId,
+      user.id,
+    );
+  }
+
+  @Post('resumeEntry')
+  async resumeEntry(
+    @CurrentUser() user: User,
+    @Body() dto: OperateStructureEmaSpotDto,
+  ) {
+    return await this.structureEmaSpotService.resumeEntry(
+      dto.strategyId,
+      user.id,
+    );
+  }
+
+  @Post('manualExit')
+  async manualExit(
+    @CurrentUser() user: User,
+    @Body() dto: ManualExitStructureEmaSpotDto,
+  ) {
+    return await this.structureEmaSpotService.manualExit(dto, user.id);
   }
 }
