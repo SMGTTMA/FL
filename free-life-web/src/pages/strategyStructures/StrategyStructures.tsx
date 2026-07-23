@@ -25,6 +25,7 @@ import {
   createStrategyKeyLevel,
   createStrategyStructureLine,
   deleteBatchStrategyKeyLevels,
+  deleteBatchStrategyDirections,
   deleteBatchStrategyStructureLines,
   listStrategyDirections,
   listStrategyKeyLevels,
@@ -234,6 +235,13 @@ const StrategyStructures = () => {
     useRequest(setStrategyDirection, {
       manual: true,
     });
+
+  const { runAsync: runDeleteDirections } = useRequest(
+    deleteBatchStrategyDirections,
+    {
+      manual: true,
+    },
+  );
 
   const normalizeFilters = (
     input: FilterFormValues,
@@ -487,6 +495,12 @@ const StrategyStructures = () => {
     await runListDirections(normalizeFilters(filters));
   };
 
+  const handleDeleteDirection = async (id: number) => {
+    await runDeleteDirections({ ids: [id] });
+    message.success("方向删除成功");
+    await runListDirections(normalizeFilters(filters));
+  };
+
   const keyLevelColumns: ColumnsType<StrategyKeyLevelItem> = [
     {
       title: "ID",
@@ -716,12 +730,25 @@ const StrategyStructures = () => {
     {
       title: "操作",
       key: "action",
-      width: 100,
+      width: 140,
       fixed: "right",
       render: (_, record) => (
-        <Button type="link" onClick={() => handleOpenEditDirection(record)}>
-          编辑
-        </Button>
+        <Space>
+          <Button type="link" onClick={() => handleOpenEditDirection(record)}>
+            编辑
+          </Button>
+          <Popconfirm
+            title="确认删除该方向？"
+            description="删除后，对应策略将不再按该方向创建新买单"
+            onConfirm={() => handleDeleteDirection(record.id)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Button type="link" danger>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];

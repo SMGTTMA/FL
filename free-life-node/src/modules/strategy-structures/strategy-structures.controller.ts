@@ -5,6 +5,7 @@ import { BatchCreateStrategyKeyLevelDto } from './dto/batch-create-strategy-key-
 import { CreateStrategyKeyLevelDto } from './dto/create-strategy-key-level.dto';
 import { DeleteBatchStrategyKeyLevelDto } from './dto/delete-batch-strategy-key-level.dto';
 import { DeleteBatchStrategyStructureLineDto } from './dto/delete-batch-strategy-structure-line.dto';
+import { DeleteBatchStrategyMarketDirectionDto } from './dto/delete-batch-strategy-market-direction.dto';
 import { QueryStrategyKeyLevelDto } from './dto/query-strategy-key-level.dto';
 import { QueryStrategyMarketDirectionListDto } from './dto/query-strategy-market-direction-list.dto';
 import { QueryStrategyMarketDirectionDto } from './dto/query-strategy-market-direction.dto';
@@ -115,5 +116,16 @@ export class StrategyStructuresController {
     @CurrentUser() user: User,
   ) {
     return await this.strategyStructuresService.listDirections(dto, user.id);
+  }
+
+  @Post('deleteBatchDirections')
+  async deleteBatchDirections(
+    @Body() dto: DeleteBatchStrategyMarketDirectionDto,
+    @CurrentUser() user: User,
+  ) {
+    return await this.strategyStructuresService.deleteBatchDirections(
+      dto,
+      user.id,
+    );
   }
 }

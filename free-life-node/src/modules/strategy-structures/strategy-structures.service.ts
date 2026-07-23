@@ -9,6 +9,7 @@ import {
 import { CreateStrategyKeyLevelDto } from './dto/create-strategy-key-level.dto';
 import { DeleteBatchStrategyKeyLevelDto } from './dto/delete-batch-strategy-key-level.dto';
 import { DeleteBatchStrategyStructureLineDto } from './dto/delete-batch-strategy-structure-line.dto';
+import { DeleteBatchStrategyMarketDirectionDto } from './dto/delete-batch-strategy-market-direction.dto';
 import { QueryStrategyKeyLevelDto } from './dto/query-strategy-key-level.dto';
 import { QueryStrategyMarketDirectionListDto } from './dto/query-strategy-market-direction-list.dto';
 import { QueryStrategyMarketDirectionDto } from './dto/query-strategy-market-direction.dto';
@@ -420,6 +421,37 @@ export class StrategyStructuresService {
     });
 
     return ResponseDto.success(list);
+  }
+
+  async deleteBatchDirections(
+    dto: DeleteBatchStrategyMarketDirectionDto,
+    userId: number,
+  ) {
+    const directions = await this.strategyMarketDirectionRepository.find({
+      where: {
+        id: In(dto.ids),
+        userId,
+      },
+      select: ['id'],
+    });
+
+    if (!directions.length) {
+      return ResponseDto.success({
+        deletedCount: 0,
+        ids: [],
+      });
+    }
+
+    const ownedIds = directions.map((item) => item.id);
+    const result = await this.strategyMarketDirectionRepository.delete({
+      id: In(ownedIds),
+      userId,
+    });
+
+    return ResponseDto.success({
+      deletedCount: result.affected || 0,
+      ids: ownedIds,
+    });
   }
 
   private async getKeyLevelsByContext(args: {

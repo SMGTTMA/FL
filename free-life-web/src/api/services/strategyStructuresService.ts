@@ -91,3 +91,9 @@ export const listStrategyDirections = (data: QueryStrategyDirectionListParams) =
     url: "/strategyStructures/listDirections",
     data,
   });
+
+export const deleteBatchStrategyDirections = (data: { ids: number[] }) =>
+  apiClient.post<{ deletedCount: number; ids: number[] }>({
+    url: "/strategyStructures/deleteBatchDirections",
+    data,
+  });
