@@ -29,6 +29,7 @@ import {
 } from '@/modules/active-spot-ema-trades/entities/active-spot-ema-trade.entity';
 import { ActiveSpotEmaTradesService } from '@/modules/active-spot-ema-trades/active-spot-ema-trades.service';
 import { RejectedOrdersService } from '@/modules/rejected-orders/rejected-orders.service';
+import { CreateRejectedOrderDto } from '@/modules/rejected-orders/dto/create-rejected-order.dto';
 import { OperationOrderType } from '@/modules/rejected-orders/entities/rejected-order.entity';
 import { roundUpPrice } from '@/utils/trading/trading';
 import {
@@ -75,6 +76,24 @@ type SignalGroup = {
   mode: StructureEmaMode;
   timeframe: TimeFrame;
   emaPeriod: number;
+};
+
+type ExitOrderGroup = {
+  takeProfitPrice: number;
+  holdings: ActiveSpotEmaTrade[];
+};
+
+type ExitOrderTask = ExitOrderGroup & {
+  aggregate: {
+    tradeAmount: number;
+    positionCost: number;
+    entryPrice: number;
+  };
+  order: PlaceOrderDto;
+};
+
+type EditExitOrderTask = ExitOrderTask & {
+  existingSell: ActiveSpotEmaTrade;
 };
 
 /**
@@ -729,17 +748,20 @@ export class StructureEmaSpotService {
     );
     const created = response?.data?.[0];
     if (!created?.id || created.status === 'rejected') {
-      await this.recordRejectedOrder(
-        args.strategy,
-        OperationOrderType.CREATE,
-        order,
-        '入场买单创建失败',
-      );
+      await this.rejectedOrdersService.createBatch([
+        this.buildRejectedOrder(
+          args.strategy,
+          OperationOrderType.CREATE,
+          { order, result: created || null },
+          '入场买单创建失败',
+        ),
+      ]);
       return;
     }
 
-    try {
-      await this.activeSpotEmaTradesService.create({
+    // 与 grid-cash 一致：只将交易所明确返回成功的订单批量写入活跃表。
+    await this.activeSpotEmaTradesService.createBatch([
+      {
         strategyRecordId: args.strategy.id,
         userId: args.strategy.userId,
         exchangeConfigId: args.strategy.exchangeConfigId,
@@ -757,15 +779,8 @@ export class StructureEmaSpotService {
         positionCost,
         tradeStatus: ActiveSpotEmaTradeStatus.PENDING_BUY,
         orderId: String(created.id),
-      });
-    } catch (error) {
-      await this.exchangeService.batchCancelOrders(
-        args.strategy.exchangeConfigId,
-        [String(created.id)],
-        args.strategy.symbol,
-      );
-      throw error;
-    }
+      },
+    ]);
   }
 
   /**
@@ -824,7 +839,7 @@ export class StructureEmaSpotService {
   ): Promise<void> {
     if (!holdings.length) return;
 
-    const groups = holdings.reduce<Map<string, ActiveSpotEmaTrade[]>>(
+    const groupedHoldings = holdings.reduce<Map<string, ActiveSpotEmaTrade[]>>(
       (map, item) => {
         const takeProfitPrice = roundUpPrice({
           price: item.takeProfitPrice,
@@ -836,30 +851,13 @@ export class StructureEmaSpotService {
       },
       new Map(),
     );
-
-    for (const [priceKey, groupedHoldings] of groups) {
-      const takeProfitPrice = Number(priceKey);
-      const existingSell =
-        await this.activeSpotEmaTradesService.findPendingSellByTakeProfitPrice({
-          strategyRecordId: strategy.id,
-          takeProfitPrice,
-        });
-      if (existingSell) {
-        await this.editAggregatedSellOrder(
-          strategy,
-          existingSell,
-          groupedHoldings,
-          marketInfo,
-        );
-      } else {
-        await this.createAggregatedSellOrder(
-          strategy,
-          groupedHoldings,
-          takeProfitPrice,
-          marketInfo,
-        );
-      }
-    }
+    const groups = [...groupedHoldings].map(
+      ([priceKey, currentHoldings]): ExitOrderGroup => ({
+        takeProfitPrice: Number(priceKey),
+        holdings: currentHoldings,
+      }),
+    );
+    await this.executeExitOrderGroups(strategy, groups, marketInfo);
   }
 
   /**
@@ -883,145 +881,187 @@ export class StructureEmaSpotService {
       );
     }
 
-    const existingSell =
-      await this.activeSpotEmaTradesService.findPendingSellByTakeProfitPrice({
-        strategyRecordId: strategy.id,
-        takeProfitPrice: normalizedExitPrice,
-      });
-    if (existingSell) {
-      return await this.editAggregatedSellOrder(
-        strategy,
-        existingSell,
-        holdings,
-        marketInfo,
-      );
-    }
-
-    return await this.createAggregatedSellOrder(
+    const successCount = await this.executeExitOrderGroups(
       strategy,
-      holdings,
-      normalizedExitPrice,
+      [{ takeProfitPrice: normalizedExitPrice, holdings }],
       marketInfo,
     );
+    return successCount === 1;
   }
 
   /**
-   * 相同止盈价尚无卖单时，创建一个聚合卖单。
-   * 交易所创建成功后，再用事务把原 HOLDING 记录替换成一条 PENDING_SELL 记录；
-   * 如果数据库处理失败，则取消刚创建的交易所订单，避免两边失去对应关系。
+   * 参考 grid-cash 的订单处理：
+   * 1. 先把所有止盈分组拆成“新建卖单”和“扩大已有卖单”；
+   * 2. 新建卖单只调用一次 createOrders，已有卖单只调用一次 batchEditOrders；
+   * 3. 根据批量返回结果，把成功项批量写库，失败项批量记录到拒单表。
    */
-  private async createAggregatedSellOrder(
+  private async executeExitOrderGroups(
     strategy: StrategyRecord,
-    holdings: ActiveSpotEmaTrade[],
-    takeProfitPrice: number,
+    groups: ExitOrderGroup[],
     marketInfo: MarketOrderInfo,
-  ): Promise<boolean> {
-    const aggregate = aggregateEmaTrades(holdings, marketInfo.stepLength);
-    const order: PlaceOrderDto = {
-      symbol: strategy.symbol,
-      side: OrderSide.SELL,
-      type: OrderType.LIMIT,
-      amount: toFinitePositiveNumber(aggregate.tradeAmount, '卖出数量'),
-      price: toFinitePositiveNumber(takeProfitPrice, '止盈价格'),
-    };
-    const response = await this.exchangeService.createOrders(
-      strategy.exchangeConfigId,
-      [order],
+  ): Promise<number> {
+    if (!groups.length) return 0;
+
+    const trades = await this.activeSpotEmaTradesService.findByStrategyRecordId(
+      strategy.id,
     );
-    const created = response?.data?.[0];
-    if (!created?.id || created.status === 'rejected') {
-      await this.recordRejectedOrder(
-        strategy,
-        OperationOrderType.CREATE,
-        order,
-        '止盈卖单创建失败',
+    const pendingSellMap = new Map(
+      trades
+        .filter(
+          (item) => item.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_SELL,
+        )
+        .map((item) => [
+          String(
+            roundUpPrice({
+              price: item.takeProfitPrice,
+              precision: marketInfo.precisionPrice,
+            }),
+          ),
+          item,
+        ]),
+    );
+    const createTasks: ExitOrderTask[] = [];
+    const editTasks: EditExitOrderTask[] = [];
+
+    for (const group of groups) {
+      const priceKey = String(group.takeProfitPrice);
+      const existingSell = pendingSellMap.get(priceKey);
+      const aggregate = aggregateEmaTrades(
+        existingSell ? [existingSell, ...group.holdings] : group.holdings,
+        marketInfo.stepLength,
       );
-      return false;
+      const order: PlaceOrderDto = {
+        symbol: strategy.symbol,
+        side: OrderSide.SELL,
+        type: OrderType.LIMIT,
+        amount: toFinitePositiveNumber(aggregate.tradeAmount, '卖出数量'),
+        price: toFinitePositiveNumber(group.takeProfitPrice, '止盈价格'),
+      };
+      const task = { ...group, aggregate, order };
+      if (existingSell) {
+        editTasks.push({ ...task, existingSell });
+      } else {
+        createTasks.push(task);
+      }
     }
 
-    try {
-      await this.activeSpotEmaTradesService.replaceHoldingsWithPendingSell({
-        strategyRecordId: strategy.id,
-        holdingIds: holdings.map((item) => item.id),
-        pendingSell: {
-          userId: strategy.userId,
-          exchangeConfigId: strategy.exchangeConfigId,
-          symbol: strategy.symbol,
-          sourceMode: null,
-          signalTimeframe: null,
-          emaPeriod: null,
-          signalKlineTime: null,
-          entryPrice: aggregate.entryPrice,
-          takeProfitPrice,
-          tradeAmount: aggregate.tradeAmount,
-          positionCost: aggregate.positionCost,
-          orderId: String(created.id),
-        },
-      });
-      return true;
-    } catch (error) {
-      await this.exchangeService.batchCancelOrders(
+    let successCount = 0;
+    const rejectedOrders: CreateRejectedOrderDto[] = [];
+
+    if (createTasks.length) {
+      const response = await this.exchangeService.createOrders(
         strategy.exchangeConfigId,
-        [String(created.id)],
-        strategy.symbol,
+        createTasks.map((item) => item.order),
       );
-      throw error;
+      const results = response?.data || [];
+      const successfulTasks: Array<{
+        task: ExitOrderTask;
+        orderId: string;
+      }> = [];
+
+      createTasks.forEach((task, index) => {
+        const result = results[index];
+        if (result?.id && result.status !== 'rejected') {
+          successfulTasks.push({ task, orderId: String(result.id) });
+        } else {
+          rejectedOrders.push(
+            this.buildRejectedOrder(
+              strategy,
+              OperationOrderType.CREATE,
+              { order: task.order, result: result || null },
+              '止盈卖单创建失败',
+            ),
+          );
+        }
+      });
+
+      if (successfulTasks.length) {
+        await this.activeSpotEmaTradesService.replaceHoldingsWithPendingSells({
+          strategyRecordId: strategy.id,
+          groups: successfulTasks.map(({ task, orderId }) => ({
+            holdingIds: task.holdings.map((item) => item.id),
+            pendingSell: {
+              userId: strategy.userId,
+              exchangeConfigId: strategy.exchangeConfigId,
+              symbol: strategy.symbol,
+              sourceMode: null,
+              signalTimeframe: null,
+              emaPeriod: null,
+              signalKlineTime: null,
+              entryPrice: task.aggregate.entryPrice,
+              takeProfitPrice: task.takeProfitPrice,
+              tradeAmount: task.aggregate.tradeAmount,
+              positionCost: task.aggregate.positionCost,
+              orderId,
+            },
+          })),
+        });
+        successCount += successfulTasks.length;
+      }
     }
-  }
 
-  /**
-   * 相同止盈价已有卖单时，参考 grid-cash 直接扩大原交易所卖单数量。
-   * 交易所编辑成功后，再用事务把新持仓并入原 PENDING_SELL 记录，整个卖单只保留一个 orderId。
-   */
-  private async editAggregatedSellOrder(
-    strategy: StrategyRecord,
-    existingSell: ActiveSpotEmaTrade,
-    holdings: ActiveSpotEmaTrade[],
-    marketInfo: MarketOrderInfo,
-  ): Promise<boolean> {
-    if (!existingSell.orderId) throw new Error('聚合止盈单缺少订单ID');
-
-    const aggregate = aggregateEmaTrades(
-      [existingSell, ...holdings],
-      marketInfo.stepLength,
-    );
-    const response = await this.exchangeService.batchEditOrders({
-      exchangeConfigId: strategy.exchangeConfigId,
-      editOrderList: [
-        {
-          orderId: String(existingSell.orderId),
+    if (editTasks.length) {
+      for (const task of editTasks) {
+        if (!task.existingSell.orderId) {
+          throw new Error('聚合止盈单缺少订单ID');
+        }
+      }
+      const response = await this.exchangeService.batchEditOrders({
+        exchangeConfigId: strategy.exchangeConfigId,
+        editOrderList: editTasks.map((task) => ({
+          orderId: String(task.existingSell.orderId),
           symbol: strategy.symbol,
-          amount: toFinitePositiveNumber(aggregate.tradeAmount, '卖出数量'),
+          amount: task.order.amount,
           side: OrderSide.SELL,
           type: OrderType.LIMIT,
-        },
-      ],
-    });
-    const success = response?.data?.successResults?.some(
-      (item) => String(item.orderId) === String(existingSell.orderId),
-    );
-    if (!success) {
-      await this.recordRejectedOrder(
-        strategy,
-        OperationOrderType.EDIT,
-        {
-          orderId: existingSell.orderId,
-          amount: aggregate.tradeAmount,
-        },
-        '止盈卖单编辑失败',
+        })),
+      });
+      const successOrderIds = new Set(
+        (response?.data?.successResults || []).map((item) =>
+          String(item.orderId),
+        ),
       );
-      return false;
+      const successfulTasks = editTasks.filter((task) =>
+        successOrderIds.has(String(task.existingSell.orderId)),
+      );
+      const failedTasks = editTasks.filter(
+        (task) => !successOrderIds.has(String(task.existingSell.orderId)),
+      );
+
+      if (successfulTasks.length) {
+        await this.activeSpotEmaTradesService.mergeHoldingsIntoPendingSells({
+          strategyRecordId: strategy.id,
+          groups: successfulTasks.map((task) => ({
+            holdingIds: task.holdings.map((item) => item.id),
+            pendingSellId: task.existingSell.id,
+            entryPrice: task.aggregate.entryPrice,
+            tradeAmount: task.aggregate.tradeAmount,
+            positionCost: task.aggregate.positionCost,
+          })),
+        });
+        successCount += successfulTasks.length;
+      }
+
+      rejectedOrders.push(
+        ...failedTasks.map((task) =>
+          this.buildRejectedOrder(
+            strategy,
+            OperationOrderType.EDIT,
+            {
+              orderId: task.existingSell.orderId,
+              order: task.order,
+              result: response?.data?.failedResults || [],
+            },
+            '止盈卖单编辑失败',
+          ),
+        ),
+      );
     }
 
-    await this.activeSpotEmaTradesService.mergeHoldingsIntoPendingSell({
-      strategyRecordId: strategy.id,
-      holdingIds: holdings.map((item) => item.id),
-      pendingSellId: existingSell.id,
-      entryPrice: aggregate.entryPrice,
-      tradeAmount: aggregate.tradeAmount,
-      positionCost: aggregate.positionCost,
-    });
-    return true;
+    if (rejectedOrders.length) {
+      await this.rejectedOrdersService.createBatch(rejectedOrders);
+    }
+    return successCount;
   }
 
   private getProfile(
@@ -1063,13 +1103,13 @@ export class StructureEmaSpotService {
     }
   }
 
-  private async recordRejectedOrder(
+  private buildRejectedOrder(
     strategy: StrategyRecord,
     orderType: OperationOrderType,
     params: unknown,
     rejectReason: string,
-  ): Promise<void> {
-    await this.rejectedOrdersService.create({
+  ): CreateRejectedOrderDto {
+    return {
       strategyName: this.strategyName,
       symbol: strategy.symbol,
       orderType,
@@ -1078,7 +1118,7 @@ export class StructureEmaSpotService {
       userId: strategy.userId,
       exchangeConfigId: strategy.exchangeConfigId,
       exchangeName: 'OKX',
-    });
+    };
   }
 
   private async recordException(
