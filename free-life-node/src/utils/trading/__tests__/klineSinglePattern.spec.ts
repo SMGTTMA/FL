@@ -1,8 +1,6 @@
 import {
   isDoji,
   isPinbar,
-  isHammer,
-  isInvertedHammer,
   isStrongBullish,
   isStrongBearish,
   isBullishEngulfing,
@@ -158,60 +156,6 @@ describe('isPinbar', () => {
       expect(result.isPinbar).toBe(false);
       expect(result.type).toBe(null);
     });
-  });
-});
-
-describe('isHammer', () => {
-  it('标准锤子线', () => {
-    // 总长度 30，下影线 22
-    const kline = createKline(100, 103, 78, 98);
-    expect(isHammer(kline)).toBe(true);
-  });
-
-  it('流星线不是锤子线', () => {
-    // 总长度 30，上影线 22
-    const kline = createKline(100, 122, 97, 102);
-    expect(isHammer(kline)).toBe(false);
-  });
-
-  it('普通K线不是锤子线', () => {
-    const kline = createKline(100, 110, 95, 105);
-    expect(isHammer(kline)).toBe(false);
-  });
-
-  it('自定义阈值', () => {
-    // 总长度 20，下影线 12 (60%)
-    const kline = createKline(100, 102, 90, 98);
-    expect(isHammer(kline, { shadowRatio: 0.5 })).toBe(true);
-    expect(isHammer(kline, { shadowRatio: 0.7 })).toBe(false);
-  });
-});
-
-describe('isInvertedHammer', () => {
-  it('标准流星线（倒锤子线）', () => {
-    // 总长度 30，上影线 22
-    const kline = createKline(100, 122, 97, 102);
-    expect(isInvertedHammer(kline)).toBe(true);
-  });
-
-  it('锤子线不是流星线', () => {
-    // 总长度 30，下影线 22
-    const kline = createKline(100, 103, 78, 98);
-    expect(isInvertedHammer(kline)).toBe(false);
-  });
-
-  it('普通K线不是流星线', () => {
-    const kline = createKline(100, 110, 95, 105);
-    expect(isInvertedHammer(kline)).toBe(false);
-  });
-
-  it('自定义阈值', () => {
-    // 总长度 20，上影线 12 (60%)
-    // high=110, low=90, close=98, open=95
-    // 上影线 = 110 - max(95, 98) = 110 - 98 = 12
-    const kline = createKline(95, 110, 90, 98);
-    expect(isInvertedHammer(kline, { shadowRatio: 0.5 })).toBe(true);
-    expect(isInvertedHammer(kline, { shadowRatio: 0.7 })).toBe(false);
   });
 });
 

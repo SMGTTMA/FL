@@ -168,50 +168,6 @@ export function isPinbar(
 }
 
 /**
- * 判断是否为锤子线
- * 定义：下影线占总K线长度的 2/3 以上
- * @param kline K线数据
- * @param options 配置选项
- * @param options.shadowRatio 下影线占总长度的比例阈值，默认 2/3
- * @param options.averageVolume 平均成交量，不传则不判断成交量
- * @param options.volumeThreshold 放量倍数阈值，默认 1.5
- * @returns 是否为锤子线
- */
-export function isHammer(
-  kline: Kline,
-  options: {
-    shadowRatio?: number;
-    averageVolume?: number;
-    volumeThreshold?: number;
-  } = {},
-): boolean {
-  const result = isPinbar(kline, options);
-  return result.isPinbar && result.type === 'hammer';
-}
-
-/**
- * 判断是否为倒锤子线（流星线）
- * 定义：上影线占总K线长度的 2/3 以上
- * @param kline K线数据
- * @param options 配置选项
- * @param options.shadowRatio 上影线占总长度的比例阈值，默认 2/3
- * @param options.averageVolume 平均成交量，不传则不判断成交量
- * @param options.volumeThreshold 放量倍数阈值，默认 1.5
- * @returns 是否为倒锤子线
- */
-export function isInvertedHammer(
-  kline: Kline,
-  options: {
-    shadowRatio?: number;
-    averageVolume?: number;
-    volumeThreshold?: number;
-  } = {},
-): boolean {
-  const result = isPinbar(kline, options);
-  return result.isPinbar && result.type === 'shooting_star';
-}
-
-/**
  * 判断是否为大阳线
  * 定义：阳线且实体长度占总长度的比例较大，可选配合成交量判断
  * @param kline K线数据
