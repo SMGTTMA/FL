@@ -24,19 +24,19 @@ export const routes: AppRouteObject[] = [
     },
   },
   {
-    path: "/gridCash",
-    element: <GridCash />,
-    meta: {
-      label: "网格现货",
-      key: "/gridCash",
-    },
-  },
-  {
     path: "/structureEmaSpot",
     element: <StructureEmaSpot />,
     meta: {
       label: "EMA结构现货",
       key: "/structureEmaSpot",
+    },
+  },
+  {
+    path: "/gridCash",
+    element: <GridCash />,
+    meta: {
+      label: "网格现货",
+      key: "/gridCash",
     },
   },
   {
@@ -48,11 +48,19 @@ export const routes: AppRouteObject[] = [
     },
   },
   {
-    path: "/aiConversations",
-    element: <AiConversations />,
+    path: "/structureAlerts",
+    element: <StructureAlerts />,
     meta: {
-      label: "AI对话记录",
-      key: "/aiConversations",
+      label: "结构监控",
+      key: "/structureAlerts",
+    },
+  },
+  {
+    path: "/indicatorSignal",
+    element: <IndicatorSignal />,
+    meta: {
+      label: "技术指标信号",
+      key: "/indicatorSignal",
     },
   },
   {
@@ -64,19 +72,11 @@ export const routes: AppRouteObject[] = [
     },
   },
   {
-    path: "/structureAlerts",
-    element: <StructureAlerts />,
+    path: "/aiConversations",
+    element: <AiConversations />,
     meta: {
-      label: "结构监控",
-      key: "/structureAlerts",
-    },
-  },
-  {
-    path: "/aiMarketMonitorLog",
-    element: <AiMarketMonitorLog />,
-    meta: {
-      label: "AI市场监控日志",
-      key: "/aiMarketMonitorLog",
+      label: "AI对话记录",
+      key: "/aiConversations",
     },
   },
   {
@@ -88,11 +88,11 @@ export const routes: AppRouteObject[] = [
     },
   },
   {
-    path: "/indicatorSignal",
-    element: <IndicatorSignal />,
+    path: "/aiMarketMonitorLog",
+    element: <AiMarketMonitorLog />,
     meta: {
-      label: "技术指标信号",
-      key: "/indicatorSignal",
+      label: "AI市场监控日志",
+      key: "/aiMarketMonitorLog",
     },
   },
   {
