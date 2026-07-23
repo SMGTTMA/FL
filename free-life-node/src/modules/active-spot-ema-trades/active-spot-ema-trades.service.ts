@@ -72,6 +72,26 @@ export class ActiveSpotEmaTradesService {
     return await this.activeSpotEmaTradeRepository.save(trades);
   }
 
+  /** 按交易记录 ID 批量应用不同的成交数据。 */
+  async updateBatchById(
+    updates: Array<{
+      id: number;
+      patch: DeepPartial<ActiveSpotEmaTrade>;
+    }>,
+  ): Promise<ActiveSpotEmaTrade[]> {
+    if (!updates.length) return [];
+
+    const updateMap = new Map(updates.map((item) => [item.id, item.patch]));
+    const trades = await this.activeSpotEmaTradeRepository.find({
+      where: { id: In([...updateMap.keys()]) },
+    });
+    for (const trade of trades) {
+      const patch = updateMap.get(trade.id);
+      if (patch) Object.assign(trade, patch);
+    }
+    return await this.activeSpotEmaTradeRepository.save(trades);
+  }
+
   async removeByIds(ids: number[]): Promise<void> {
     if (!ids.length) return;
     await this.activeSpotEmaTradeRepository.delete({ id: In(ids) });

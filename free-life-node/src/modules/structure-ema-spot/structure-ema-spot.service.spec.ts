@@ -65,11 +65,16 @@ describe('StructureEmaSpotService 批量订单处理', () => {
     exchangeService = {
       createOrders: jest.fn(),
       batchEditOrders: jest.fn(),
-      getBalance: jest.fn(),
+      fetchOrder: jest.fn(),
+      getBalance: jest.fn().mockResolvedValue({
+        data: { BTC: { free: 10 }, USDT: { free: 1000 } },
+      }),
     };
     activeTradesService = {
       findByStrategyRecordId: jest.fn(),
       createBatch: jest.fn(),
+      updateBatchById: jest.fn(),
+      removeByIds: jest.fn(),
       replaceHoldingsWithPendingSells: jest.fn(),
       mergeHoldingsIntoPendingSells: jest.fn(),
     };
@@ -222,5 +227,151 @@ describe('StructureEmaSpotService 批量订单处理', () => {
       orderId: 'buy-1',
       tradeStatus: ActiveSpotEmaTradeStatus.PENDING_BUY,
     });
+  });
+
+  it('买单离开 openOrders 后使用交易所实际成交数据更新持仓', async () => {
+    const pendingBuy = {
+      ...holding(1, 110),
+      tradeStatus: ActiveSpotEmaTradeStatus.PENDING_BUY,
+      orderId: 'buy-1',
+    } as ActiveSpotEmaTrade;
+    activeTradesService.findByStrategyRecordId.mockResolvedValue([pendingBuy]);
+    exchangeService.fetchOrder.mockResolvedValue({
+      data: {
+        id: 'buy-1',
+        status: 'closed',
+        filled: 1,
+        average: 100,
+        cost: 100,
+        fee: { currency: 'BTC', cost: 0.001 },
+      },
+    });
+
+    await (service as any).syncOrderStates(
+      strategy,
+      STRUCTURE_EMA_SPOT_DEFAULT_CONFIG,
+      [],
+      Date.now(),
+      marketInfo,
+    );
+
+    const update = activeTradesService.updateBatchById.mock.calls[0][0][0];
+    expect(update.id).toBe(1);
+    expect(update.patch).toMatchObject({
+      tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
+      orderId: null,
+      tradeAmount: 0.999,
+      positionCost: 100,
+    });
+    expect(update.patch.entryPrice).toBeCloseTo(100 / 0.999);
+  });
+
+  it('买单被取消且没有成交时删除本地记录', async () => {
+    const pendingBuy = {
+      ...holding(1, 110),
+      tradeStatus: ActiveSpotEmaTradeStatus.PENDING_BUY,
+      orderId: 'buy-1',
+    } as ActiveSpotEmaTrade;
+    activeTradesService.findByStrategyRecordId.mockResolvedValue([pendingBuy]);
+    exchangeService.fetchOrder.mockResolvedValue({
+      data: { id: 'buy-1', status: 'canceled', filled: 0 },
+    });
+
+    await (service as any).syncOrderStates(
+      strategy,
+      STRUCTURE_EMA_SPOT_DEFAULT_CONFIG,
+      [],
+      Date.now(),
+      marketInfo,
+    );
+
+    expect(activeTradesService.removeByIds).toHaveBeenCalledWith([1]);
+    expect(activeTradesService.updateBatchById).not.toHaveBeenCalled();
+  });
+
+  it('卖单取消后按交易所剩余数量恢复为持仓', async () => {
+    const currentPendingSell = pendingSell(3, 110, 'sell-1');
+    activeTradesService.findByStrategyRecordId.mockResolvedValue([
+      currentPendingSell,
+    ]);
+    exchangeService.fetchOrder.mockResolvedValue({
+      data: {
+        id: 'sell-1',
+        status: 'canceled',
+        filled: 0.4,
+        remaining: 0.6,
+      },
+    });
+
+    await (service as any).syncOrderStates(
+      strategy,
+      STRUCTURE_EMA_SPOT_DEFAULT_CONFIG,
+      [],
+      Date.now(),
+      marketInfo,
+    );
+
+    expect(activeTradesService.updateBatchById).toHaveBeenCalledWith([
+      {
+        id: 3,
+        patch: expect.objectContaining({
+          tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
+          orderId: null,
+          tradeAmount: 0.6,
+          positionCost: 60,
+        }),
+      },
+    ]);
+    expect(activeTradesService.removeByIds).not.toHaveBeenCalled();
+  });
+
+  it('卖单在交易所已完全成交时删除本地活跃记录', async () => {
+    const currentPendingSell = pendingSell(3, 110, 'sell-1');
+    activeTradesService.findByStrategyRecordId.mockResolvedValue([
+      currentPendingSell,
+    ]);
+    exchangeService.fetchOrder.mockResolvedValue({
+      data: {
+        id: 'sell-1',
+        status: 'closed',
+        filled: 1,
+        remaining: 0,
+      },
+    });
+
+    await (service as any).syncOrderStates(
+      strategy,
+      STRUCTURE_EMA_SPOT_DEFAULT_CONFIG,
+      [],
+      Date.now(),
+      marketInfo,
+    );
+
+    expect(activeTradesService.removeByIds).toHaveBeenCalledWith([3]);
+  });
+
+  it('卖出数量超过交易所可用余额时按可用余额向下截断', async () => {
+    const currentHolding = holding(1, 110);
+    activeTradesService.findByStrategyRecordId.mockResolvedValue([
+      currentHolding,
+    ]);
+    exchangeService.getBalance.mockResolvedValue({
+      data: { BTC: { free: 0.999 } },
+    });
+    exchangeService.createOrders.mockResolvedValue({
+      data: [{ id: 'sell-1', status: 'open', amount: 0.999, price: 110 }],
+    });
+
+    await (service as any).executeExitOrderGroups(
+      strategy,
+      [{ takeProfitPrice: 110, holdings: [currentHolding] }],
+      marketInfo,
+    );
+
+    expect(exchangeService.createOrders.mock.calls[0][1][0].amount).toBe(0.999);
+    const pendingSell =
+      activeTradesService.replaceHoldingsWithPendingSells.mock.calls[0][0]
+        .groups[0].pendingSell;
+    expect(pendingSell.tradeAmount).toBe(0.999);
   });
 });

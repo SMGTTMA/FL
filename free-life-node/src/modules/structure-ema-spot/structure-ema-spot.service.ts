@@ -244,7 +244,13 @@ export class StructureEmaSpotService {
     const marketInfo = this.normalizeMarketInfo(marketInfoRes?.data);
 
     // 必须先同步订单状态，后续资金占用、入场间距和退出判断才会使用最新数据。
-    await this.syncOrderStates(strategy, config, openOrders, now.getTime());
+    await this.syncOrderStates(
+      strategy,
+      config,
+      openOrders,
+      now.getTime(),
+      marketInfo,
+    );
 
     const snapshot = await this.getStructureSnapshot(strategy);
     const runtime = parseStructureEmaRuntimeState(strategy.parameters);
@@ -284,14 +290,15 @@ export class StructureEmaSpotService {
 
   /**
    * 根据交易所当前挂单同步本地状态。
-   * 按本策略约定：本地订单不在 openOrders 中，就直接认为买入或卖出已经完成。
-   * 这是有意采用的简化模型，用户在交易所手动操作时也遵循同一规则。
+   * 订单离开 openOrders 后进一步查询订单详情，用交易所的成交状态、
+   * 实际成交价、净成交数量和成本更新本地记录。
    */
   private async syncOrderStates(
     strategy: StrategyRecord,
     config: StructureEmaSpotConfig,
     openOrders: Order[],
     now: number,
+    marketInfo: MarketOrderInfo,
   ): Promise<void> {
     const trades = await this.activeSpotEmaTradesService.findByStrategyRecordId(
       strategy.id,
@@ -299,42 +306,203 @@ export class StructureEmaSpotService {
     const openOrderIds = new Set(
       openOrders.map((item) => String(item.id)).filter(Boolean),
     );
-    const filledBuyIds: number[] = [];
-    const completedSellIds: number[] = [];
     const expiredBuyTrades: ActiveSpotEmaTrade[] = [];
+    const needQueryTrades: ActiveSpotEmaTrade[] = [];
 
     for (const trade of trades) {
       const orderId = trade.orderId ? String(trade.orderId) : '';
       if (trade.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_BUY) {
-        if (!orderId || !openOrderIds.has(orderId)) {
-          filledBuyIds.push(trade.id);
+        if (orderId && !openOrderIds.has(orderId)) {
+          needQueryTrades.push(trade);
           continue;
         }
-        if (this.isPendingBuyExpired(trade, config, now)) {
+        if (orderId && this.isPendingBuyExpired(trade, config, now)) {
           expiredBuyTrades.push(trade);
         }
       }
 
       if (
         trade.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_SELL &&
-        (!orderId || !openOrderIds.has(orderId))
+        orderId &&
+        !openOrderIds.has(orderId)
       ) {
-        completedSellIds.push(trade.id);
+        needQueryTrades.push(trade);
       }
     }
 
-    if (filledBuyIds.length) {
-      await this.activeSpotEmaTradesService.updateBatch(filledBuyIds, {
-        tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
-        orderId: null,
-      });
+    const orderDetails = await Promise.all(
+      needQueryTrades.map(async (trade) => {
+        try {
+          const response = await this.exchangeService.fetchOrder(
+            strategy.exchangeConfigId,
+            String(trade.orderId),
+            strategy.symbol,
+          );
+          return response?.data ? { trade, order: response.data } : null;
+        } catch (error) {
+          this.logger.warn(
+            `查询交易所订单详情失败 strategyId=${strategy.id}, orderId=${trade.orderId}: ${this.getErrorMessage(error)}`,
+          );
+          return null;
+        }
+      }),
+    );
+
+    const tradeUpdates: Array<{
+      id: number;
+      patch: Partial<ActiveSpotEmaTrade>;
+    }> = [];
+    const terminalTradeIds: number[] = [];
+
+    for (const detail of orderDetails) {
+      if (!detail) continue;
+      const { trade, order } = detail;
+      const status = String(order.status || '').toLowerCase();
+      const filled = Number(order.filled);
+      const hasFill = Number.isFinite(filled) && filled > 0;
+
+      if (trade.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_BUY) {
+        if (
+          status === 'closed' ||
+          (this.isCanceledOrderStatus(status) && hasFill)
+        ) {
+          const actual = this.calculateActualBuyTrade(
+            strategy,
+            trade,
+            order,
+            marketInfo,
+          );
+          if (!actual) continue;
+          tradeUpdates.push({
+            id: trade.id,
+            patch: {
+              ...actual,
+              tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
+              orderId: null,
+            },
+          });
+          continue;
+        }
+        if (this.isCanceledOrderStatus(status)) {
+          terminalTradeIds.push(trade.id);
+        }
+        continue;
+      }
+
+      if (trade.tradeStatus === ActiveSpotEmaTradeStatus.PENDING_SELL) {
+        if (status === 'closed') {
+          terminalTradeIds.push(trade.id);
+          continue;
+        }
+        if (this.isCanceledOrderStatus(status)) {
+          const orderRemaining = Number(order.remaining);
+          const localAmount = Number(trade.tradeAmount);
+          const remainingRawAmount =
+            Number.isFinite(orderRemaining) && orderRemaining >= 0
+              ? orderRemaining
+              : Math.max(localAmount - (hasFill ? filled : 0), 0);
+          if (remainingRawAmount < marketInfo.minSz) {
+            terminalTradeIds.push(trade.id);
+            continue;
+          }
+          const tradeAmount = truncateDownByStep(
+            remainingRawAmount,
+            marketInfo.stepLength,
+          );
+          const positionCost =
+            Number(trade.positionCost) * (tradeAmount / localAmount);
+          tradeUpdates.push({
+            id: trade.id,
+            patch: {
+              tradeStatus: ActiveSpotEmaTradeStatus.HOLDING,
+              orderId: null,
+              tradeAmount,
+              positionCost,
+              entryPrice: positionCost / tradeAmount,
+            },
+          });
+          this.logger.warn(
+            `卖单未完成成交，剩余数量恢复为持仓 strategyId=${strategy.id}, orderId=${order.id}, remaining=${tradeAmount}`,
+          );
+        }
+      }
     }
 
-    if (completedSellIds.length) {
-      await this.activeSpotEmaTradesService.removeByIds(completedSellIds);
+    if (tradeUpdates.length) {
+      await this.activeSpotEmaTradesService.updateBatchById(tradeUpdates);
+    }
+    if (terminalTradeIds.length) {
+      await this.activeSpotEmaTradesService.removeByIds(terminalTradeIds);
     }
 
     await this.cancelPendingBuyTrades(strategy, expiredBuyTrades);
+  }
+
+  /** 计算买单实际成交后可用于卖出的净数量和真实成本。 */
+  private calculateActualBuyTrade(
+    strategy: StrategyRecord,
+    trade: ActiveSpotEmaTrade,
+    order: Order,
+    marketInfo: MarketOrderInfo,
+  ): Pick<
+    ActiveSpotEmaTrade,
+    'entryPrice' | 'takeProfitPrice' | 'tradeAmount' | 'positionCost'
+  > | null {
+    const filled = Number(order.filled);
+    if (!Number.isFinite(filled) || filled <= 0) return null;
+
+    const [baseAsset, quoteAssetWithSuffix] = strategy.symbol.split('/');
+    const quoteAsset = quoteAssetWithSuffix?.split(':')[0];
+    const fees = order.fee ? [order.fee] : [];
+    const baseFee = fees.reduce((sum, fee) => {
+      if (String(fee.currency).toUpperCase() !== baseAsset.toUpperCase()) {
+        return sum;
+      }
+      const cost = Number(fee.cost);
+      return sum + (Number.isFinite(cost) && cost > 0 ? cost : 0);
+    }, 0);
+    const quoteFee = fees.reduce((sum, fee) => {
+      if (String(fee.currency).toUpperCase() !== quoteAsset?.toUpperCase()) {
+        return sum;
+      }
+      const cost = Number(fee.cost);
+      return sum + (Number.isFinite(cost) && cost > 0 ? cost : 0);
+    }, 0);
+    const netFilled = filled - baseFee;
+    if (!Number.isFinite(netFilled) || netFilled <= 0) return null;
+    const tradeAmount = truncateDownByStep(netFilled, marketInfo.stepLength);
+    if (tradeAmount < marketInfo.minSz) {
+      this.logger.warn(
+        `买单净成交数量低于交易所最小数量 strategyId=${strategy.id}, orderId=${order.id}, amount=${tradeAmount}`,
+      );
+      return null;
+    }
+
+    const fallbackAverage = Number(order.price) || Number(trade.entryPrice);
+    const average = Number(order.average) || fallbackAverage;
+    const cost = Number(order.cost);
+    const positionCost =
+      (Number.isFinite(cost) && cost > 0 ? cost : average * filled) + quoteFee;
+    const entryPrice = positionCost / tradeAmount;
+    const originalProfitRate = Math.max(
+      Number(trade.takeProfitPrice) / Number(trade.entryPrice) - 1,
+      0,
+    );
+    const takeProfitPrice = roundUpPrice({
+      price: entryPrice * (1 + originalProfitRate),
+      precision: marketInfo.precisionPrice,
+    });
+
+    return {
+      entryPrice,
+      takeProfitPrice,
+      tradeAmount,
+      positionCost,
+    };
+  }
+
+  private isCanceledOrderStatus(status: string): boolean {
+    return ['canceled', 'cancelled', 'expired', 'rejected'].includes(status);
   }
 
   /** 买单最多保留配置指定的完整 K 线数量，超时仍未成交就取消。 */
@@ -730,11 +898,6 @@ export class StructureEmaSpotService {
       return;
     }
 
-    // 最低止盈价在入场时固定记录，之后所有出场信号都必须先满足该价格。
-    const takeProfitPrice = roundUpPrice({
-      price: entryPrice * (1 + args.config.profitPoint),
-      precision: args.marketInfo.precisionPrice,
-    });
     const order: PlaceOrderDto = {
       symbol: args.strategy.symbol,
       side: OrderSide.BUY,
@@ -760,6 +923,21 @@ export class StructureEmaSpotService {
     }
 
     // 与 grid-cash 一致：只将交易所明确返回成功的订单批量写入活跃表。
+    const exchangeEntryPrice = Number(created.price);
+    const exchangeTradeAmount = Number(created.amount);
+    const acceptedEntryPrice =
+      Number.isFinite(exchangeEntryPrice) && exchangeEntryPrice > 0
+        ? exchangeEntryPrice
+        : entryPrice;
+    const acceptedTradeAmount =
+      Number.isFinite(exchangeTradeAmount) && exchangeTradeAmount > 0
+        ? exchangeTradeAmount
+        : tradeAmount;
+    const acceptedPositionCost = acceptedEntryPrice * acceptedTradeAmount;
+    const acceptedTakeProfitPrice = roundUpPrice({
+      price: acceptedEntryPrice * (1 + args.config.profitPoint),
+      precision: args.marketInfo.precisionPrice,
+    });
     await this.activeSpotEmaTradesService.createBatch([
       {
         strategyRecordId: args.strategy.id,
@@ -773,10 +951,10 @@ export class StructureEmaSpotService {
         signalTimeframe: profile.timeframe,
         emaPeriod: profile.emaPeriod,
         signalKlineTime: args.context.currentKlineTime,
-        entryPrice,
-        takeProfitPrice,
-        tradeAmount,
-        positionCost,
+        entryPrice: acceptedEntryPrice,
+        takeProfitPrice: acceptedTakeProfitPrice,
+        tradeAmount: acceptedTradeAmount,
+        positionCost: acceptedPositionCost,
         tradeStatus: ActiveSpotEmaTradeStatus.PENDING_BUY,
         orderId: String(created.id),
       },
@@ -905,6 +1083,15 @@ export class StructureEmaSpotService {
     const trades = await this.activeSpotEmaTradesService.findByStrategyRecordId(
       strategy.id,
     );
+    const baseAsset = strategy.symbol.split('/')[0];
+    const balanceRes = await this.exchangeService.getBalance(
+      strategy.exchangeConfigId,
+    );
+    let availableBase = Number(balanceRes?.data?.[baseAsset]?.free);
+    if (!Number.isFinite(availableBase) || availableBase <= 0) {
+      strategy.stopReason = `账户可用${baseAsset}不足，无法创建卖单`;
+      return 0;
+    }
     const pendingSellMap = new Map(
       trades
         .filter(
@@ -926,8 +1113,37 @@ export class StructureEmaSpotService {
     for (const group of groups) {
       const priceKey = String(group.takeProfitPrice);
       const existingSell = pendingSellMap.get(priceKey);
+      const holdingAggregate = aggregateEmaTrades(
+        group.holdings,
+        marketInfo.stepLength,
+      );
+      const sellableRawAmount = Math.min(
+        holdingAggregate.tradeAmount,
+        availableBase,
+      );
+      if (sellableRawAmount < marketInfo.minSz) {
+        this.logger.warn(
+          `可用${baseAsset}不足，跳过卖单 strategyId=${strategy.id}, requested=${holdingAggregate.tradeAmount}, available=${availableBase}`,
+        );
+        continue;
+      }
+      const sellableAmount = truncateDownByStep(
+        sellableRawAmount,
+        marketInfo.stepLength,
+      );
+      const sellRatio = sellableAmount / holdingAggregate.tradeAmount;
+      const sellableHolding = {
+        tradeAmount: sellableAmount,
+        positionCost: holdingAggregate.positionCost * sellRatio,
+      };
+      availableBase = Math.max(availableBase - sellableAmount, 0);
+      if (sellableAmount < holdingAggregate.tradeAmount) {
+        this.logger.warn(
+          `卖出数量按交易所可用余额调整 strategyId=${strategy.id}, requested=${holdingAggregate.tradeAmount}, actual=${sellableAmount}`,
+        );
+      }
       const aggregate = aggregateEmaTrades(
-        existingSell ? [existingSell, ...group.holdings] : group.holdings,
+        existingSell ? [existingSell, sellableHolding] : [sellableHolding],
         marketInfo.stepLength,
       );
       const order: PlaceOrderDto = {
@@ -956,13 +1172,13 @@ export class StructureEmaSpotService {
       const results = response?.data || [];
       const successfulTasks: Array<{
         task: ExitOrderTask;
-        orderId: string;
+        result: Order;
       }> = [];
 
       createTasks.forEach((task, index) => {
         const result = results[index];
         if (result?.id && result.status !== 'rejected') {
-          successfulTasks.push({ task, orderId: String(result.id) });
+          successfulTasks.push({ task, result });
         } else {
           rejectedOrders.push(
             this.buildRejectedOrder(
@@ -978,23 +1194,36 @@ export class StructureEmaSpotService {
       if (successfulTasks.length) {
         await this.activeSpotEmaTradesService.replaceHoldingsWithPendingSells({
           strategyRecordId: strategy.id,
-          groups: successfulTasks.map(({ task, orderId }) => ({
-            holdingIds: task.holdings.map((item) => item.id),
-            pendingSell: {
-              userId: strategy.userId,
-              exchangeConfigId: strategy.exchangeConfigId,
-              symbol: strategy.symbol,
-              sourceMode: null,
-              signalTimeframe: null,
-              emaPeriod: null,
-              signalKlineTime: null,
-              entryPrice: task.aggregate.entryPrice,
-              takeProfitPrice: task.takeProfitPrice,
-              tradeAmount: task.aggregate.tradeAmount,
-              positionCost: task.aggregate.positionCost,
-              orderId,
-            },
-          })),
+          groups: successfulTasks.map(({ task, result }) => {
+            const resultAmount = Number(result.amount);
+            const tradeAmount =
+              Number.isFinite(resultAmount) && resultAmount > 0
+                ? resultAmount
+                : task.aggregate.tradeAmount;
+            const amountRatio = tradeAmount / task.aggregate.tradeAmount;
+            const positionCost = task.aggregate.positionCost * amountRatio;
+            const resultPrice = Number(result.price);
+            return {
+              holdingIds: task.holdings.map((item) => item.id),
+              pendingSell: {
+                userId: strategy.userId,
+                exchangeConfigId: strategy.exchangeConfigId,
+                symbol: strategy.symbol,
+                sourceMode: null,
+                signalTimeframe: null,
+                emaPeriod: null,
+                signalKlineTime: null,
+                entryPrice: positionCost / tradeAmount,
+                takeProfitPrice:
+                  Number.isFinite(resultPrice) && resultPrice > 0
+                    ? resultPrice
+                    : task.takeProfitPrice,
+                tradeAmount,
+                positionCost,
+                orderId: String(result.id),
+              },
+            };
+          }),
         });
         successCount += successfulTasks.length;
       }
@@ -1121,6 +1350,10 @@ export class StructureEmaSpotService {
     };
   }
 
+  private getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   private async recordException(
     url: string,
     error: unknown,
@@ -1161,15 +1394,22 @@ export class StructureEmaSpotService {
     return await this.withStrategyLock(strategyId, async () => {
       const strategy = await this.findRunningStrategy(strategyId, userId);
       const config = this.parseConfigJson(strategy.configJson);
-      const openOrdersRes = await this.exchangeService.fetchOpenOrders(
-        strategy.exchangeConfigId,
-        strategy.symbol,
-      );
+      const [openOrdersRes, marketInfoRes] = await Promise.all([
+        this.exchangeService.fetchOpenOrders(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+        this.exchangeService.fetchMarketMinOrderInfo(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+      ]);
       await this.syncOrderStates(
         strategy,
         config,
         openOrdersRes?.data || [],
         Date.now(),
+        this.normalizeMarketInfo(marketInfoRes?.data),
       );
 
       const trades =
@@ -1193,15 +1433,22 @@ export class StructureEmaSpotService {
       await this.strategyRecordRepository.save(strategy);
 
       const config = this.parseConfigJson(strategy.configJson);
-      const openOrdersRes = await this.exchangeService.fetchOpenOrders(
-        strategy.exchangeConfigId,
-        strategy.symbol,
-      );
+      const [openOrdersRes, marketInfoRes] = await Promise.all([
+        this.exchangeService.fetchOpenOrders(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+        this.exchangeService.fetchMarketMinOrderInfo(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+      ]);
       await this.syncOrderStates(
         strategy,
         config,
         openOrdersRes?.data || [],
         Date.now(),
+        this.normalizeMarketInfo(marketInfoRes?.data),
       );
       const trades =
         await this.activeSpotEmaTradesService.findByStrategyRecordId(
@@ -1260,6 +1507,7 @@ export class StructureEmaSpotService {
         config,
         openOrdersRes?.data || [],
         Date.now(),
+        marketInfo,
       );
 
       const trades =

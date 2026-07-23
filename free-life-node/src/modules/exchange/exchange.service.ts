@@ -308,6 +308,24 @@ export class ExchangeService {
   }
 
   /**
+   * 查询单个订单的最终状态和实际成交数据。
+   * 用于订单离开 openOrders 后区分成交、取消和拒绝。
+   */
+  async fetchOrder(
+    exchangeConfigId: number,
+    orderId: string,
+    symbol: string,
+  ): Promise<ResponseDto<ccxt.Order>> {
+    try {
+      const exchange = await this.getExchangeInstance(exchangeConfigId);
+      const order = await exchange.fetchOrder(orderId, symbol);
+      return ResponseDto.success(order);
+    } catch (error) {
+      throw new InternalServerErrorException(error);
+    }
+  }
+
+  /**
    * 批量取消订单（每批最多 20 单，超出部分自动分批）
    * @param exchangeConfigId 配置ID
    * @param orderIds 订单ID数组
