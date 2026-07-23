@@ -4,7 +4,6 @@ import ApiConfigPage from "@/pages/apiConfigPage/apiConfigPage";
 import UserManagement from "@/pages/userManagement/userManagement";
 import ExceptionLog from "@/pages/exceptionLog/exceptionLog";
 import GridCash from "@/pages/gridCash/GridCash";
-import PriceActionSpot from "@/pages/priceActionSpot/PriceActionSpot";
 import IndicatorSignal from "@/pages/indicatorSignal/IndicatorSignal";
 import AiConversations from "@/pages/aiConversations/AiConversations";
 import AiMarketMonitor from "@/pages/aiMarketMonitor/AiMarketMonitor";
@@ -37,14 +36,6 @@ export const routes: AppRouteObject[] = [
     meta: {
       label: "网格现货",
       key: "/gridCash",
-    },
-  },
-  {
-    path: "/priceActionSpot",
-    element: <PriceActionSpot />,
-    meta: {
-      label: "价格行为现货",
-      key: "/priceActionSpot",
     },
   },
   {

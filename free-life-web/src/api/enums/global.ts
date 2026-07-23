@@ -1,12 +1,10 @@
 export enum StrategyTypeEnum {
   GRID_CASH = "grid_cash",
-  PRICE_ACTION_SPOT = "price_action_spot",
   STRUCTURE_EMA_SPOT = "structure_ema_spot",
 }
 
 export enum StrategyNameEnum {
   "grid_cash" = "网格现货策略",
-  "price_action_spot" = "价格行为现货策略",
   "structure_ema_spot" = "EMA结构现货策略",
 }
 

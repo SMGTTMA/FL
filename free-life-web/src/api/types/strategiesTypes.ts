@@ -133,65 +133,6 @@ export type GetGridCashStrategyConfigResponse = {
   max: ParseGridCashConfigJson;
 };
 
-/**
- * 价格行为现货策略开启参数
- */
-export type StartPriceActionSpotParams = {
-  /** 交易对 例如：BTC/USDT */
-  symbol: string;
-  /** 交易所配置ID */
-  exchangeConfigId: number | string;
-  /** 每单投入资金（USDT） */
-  singleOrderAmount: number;
-  /** 最多投入单数 */
-  maxOrderCount: number;
-  /** 小周期 */
-  shortTimeframe: string;
-  /** 大周期 */
-  longTimeframe: string;
-  /** 盈利收益点 */
-  profitPoint: number;
-};
-
-/**
- * 价格行为现货策略编辑参数
- */
-export type EditPriceActionSpotParams = {
-  strategyId: number;
-} & Partial<
-  Pick<
-    StartPriceActionSpotParams,
-    | "singleOrderAmount"
-    | "maxOrderCount"
-    | "shortTimeframe"
-    | "longTimeframe"
-    | "profitPoint"
-  >
->;
-
-/**
- * 价格行为现货策略配置
- */
-export type ParsePriceActionSpotConfigJson = {
-  /** 每单投入资金（USDT） */
-  singleOrderAmount: number;
-  /** 最多投入单数 */
-  maxOrderCount: number;
-  /** 小周期 */
-  shortTimeframe: string;
-  /** 大周期 */
-  longTimeframe: string;
-  /** 盈利收益点 */
-  profitPoint: number;
-};
-
-export type GetPriceActionSpotStrategyConfigResponse = {
-  default: ParsePriceActionSpotConfigJson;
-  min: ParsePriceActionSpotConfigJson;
-  max: ParsePriceActionSpotConfigJson;
-  timeframeOptions: string[];
-};
-
 /** EMA结构策略单个交易模式的配置。 */
 export type StructureEmaProfileConfig = {
   /** 交易周期 */

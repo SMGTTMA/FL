@@ -21,7 +21,6 @@ import { IndicatorSignalModule } from './modules/indicator-signal/indicator-sign
 import { DeepseekModule } from './modules/deepseek/deepseek.module';
 import { AiConversationsModule } from './modules/ai-conversations/ai-conversations.module';
 import { AiMarketMonitorModule } from './modules/ai-market-monitor/ai-market-monitor.module';
-import { PriceActionSpotModule } from './modules/price-action-spot/price-action-spot.module';
 import { HistoricalBacktestModule } from './modules/historical-backtest/historical-backtest.module';
 import { StrategyStructuresModule } from './modules/strategy-structures/strategy-structures.module';
 import { StructureAlertsModule } from './modules/structure-alerts/structure-alerts.module';
@@ -58,7 +57,6 @@ import { StructureEmaSpotModule } from './modules/structure-ema-spot/structure-e
     DeepseekModule,
     AiConversationsModule,
     AiMarketMonitorModule,
-    PriceActionSpotModule,
     HistoricalBacktestModule,
     StrategyStructuresModule,
     StructureAlertsModule,

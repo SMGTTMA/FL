@@ -9,9 +9,6 @@ import {
   StartGridCashStrategyParams,
   EditGridCashStrategyParams,
   GetGridCashStrategyConfigResponse,
-  StartPriceActionSpotParams,
-  EditPriceActionSpotParams,
-  GetPriceActionSpotStrategyConfigResponse,
   StartStructureEmaSpotParams,
   EditStructureEmaSpotParams,
   GetStructureEmaSpotConfigResponse,
@@ -109,37 +106,6 @@ export const editGridCashStrategy = (data: EditGridCashStrategyParams) =>
 export const getGridCashStrategyConfig = () =>
   apiClient.post<GetGridCashStrategyConfigResponse>({
     url: "/strategies/gridCash/getConfig",
-  });
-
-/** 价格行为现货策略开启 */
-export const startPriceActionSpotStrategy = (
-  data: StartPriceActionSpotParams
-) =>
-  apiClient.post<string>({
-    url: "/strategies/priceActionSpot/start",
-    data,
-  });
-
-/** 价格行为现货策略停止 */
-export const stopPriceActionSpotStrategy = (data: { strategyId: number }) =>
-  apiClient.post<string>({
-    url: "/strategies/priceActionSpot/stop",
-    data,
-  });
-
-/** 价格行为现货策略编辑 */
-export const editPriceActionSpotStrategy = (
-  data: EditPriceActionSpotParams
-) =>
-  apiClient.post<string>({
-    url: "/strategies/priceActionSpot/edit",
-    data,
-  });
-
-/** 价格行为现货策略config 配置信息 */
-export const getPriceActionSpotStrategyConfig = () =>
-  apiClient.post<GetPriceActionSpotStrategyConfigResponse>({
-    url: "/strategies/priceActionSpot/getConfig",
   });
 
 /** EMA结构现货策略开启 */
