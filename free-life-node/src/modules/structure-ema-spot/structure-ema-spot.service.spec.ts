@@ -66,6 +66,9 @@ describe('StructureEmaSpotService 批量订单处理', () => {
       createOrders: jest.fn(),
       batchEditOrders: jest.fn(),
       fetchOrder: jest.fn(),
+      fetchMarketMinOrderInfo: jest.fn().mockResolvedValue({
+        data: marketInfo,
+      }),
       getBalance: jest.fn().mockResolvedValue({
         data: { BTC: { free: 10 }, USDT: { free: 1000 } },
       }),
@@ -373,5 +376,78 @@ describe('StructureEmaSpotService 批量订单处理', () => {
       activeTradesService.replaceHoldingsWithPendingSells.mock.calls[0][0]
         .groups[0].pendingSell;
     expect(pendingSell.tradeAmount).toBe(0.999);
+  });
+
+  it('手动入场只使用用户传入的价格，其余参数由上涨模式计算', async () => {
+    const runningStrategy = {
+      ...strategy,
+      configJson: JSON.stringify(STRUCTURE_EMA_SPOT_DEFAULT_CONFIG),
+      parameters: { entryPaused: false },
+    } as StrategyRecord;
+    (service as any).findRunningStrategy = jest
+      .fn()
+      .mockResolvedValue(runningStrategy);
+    (service as any).getStructureSnapshot = jest.fn().mockResolvedValue({
+      direction: 'UP',
+      keyLevels: [],
+    });
+    const placeEntryOrder = jest.fn().mockResolvedValue({
+      orderId: 'buy-1',
+      entryPrice: 99,
+      takeProfitPrice: 100,
+      tradeAmount: 1,
+      positionCost: 99,
+    });
+    (service as any).placeEntryOrder = placeEntryOrder;
+
+    const response = await service.manualEntry(
+      { strategyId: strategy.id, entryPrice: 99 },
+      strategy.userId,
+    );
+
+    expect(response.data).toContain('订单ID buy-1');
+    expect(placeEntryOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        strategy: runningStrategy,
+        mode: 'UP',
+        context: expect.objectContaining({ currentClose: 99 }),
+        keyLevels: [],
+        marketInfo,
+      }),
+    );
+  });
+
+  it('手动入场在日线下跌方向时拒绝创建买单', async () => {
+    (service as any).findRunningStrategy = jest.fn().mockResolvedValue({
+      ...strategy,
+      configJson: JSON.stringify(STRUCTURE_EMA_SPOT_DEFAULT_CONFIG),
+      parameters: { entryPaused: false },
+    });
+    (service as any).getStructureSnapshot = jest.fn().mockResolvedValue({
+      direction: 'DOWN',
+      keyLevels: [],
+    });
+
+    await expect(
+      service.manualEntry(
+        { strategyId: strategy.id, entryPrice: 99 },
+        strategy.userId,
+      ),
+    ).rejects.toThrow('当前日线方向不允许创建买单');
+  });
+
+  it('策略暂停开仓时拒绝手动入场', async () => {
+    (service as any).findRunningStrategy = jest.fn().mockResolvedValue({
+      ...strategy,
+      configJson: JSON.stringify(STRUCTURE_EMA_SPOT_DEFAULT_CONFIG),
+      parameters: { entryPaused: true },
+    });
+
+    await expect(
+      service.manualEntry(
+        { strategyId: strategy.id, entryPrice: 99 },
+        strategy.userId,
+      ),
+    ).rejects.toThrow('策略已暂停开仓');
   });
 });

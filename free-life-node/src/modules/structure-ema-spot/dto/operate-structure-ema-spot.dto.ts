@@ -31,3 +31,9 @@ export class ManualExitStructureEmaSpotDto extends OperateStructureEmaSpotDto {
   @IsBoolean()
   pauseEntry?: boolean;
 }
+
+export class ManualEntryStructureEmaSpotDto extends OperateStructureEmaSpotDto {
+  @IsNumber()
+  @IsPositive()
+  entryPrice: number;
+}

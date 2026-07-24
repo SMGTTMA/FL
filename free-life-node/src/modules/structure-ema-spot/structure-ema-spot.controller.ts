@@ -5,6 +5,7 @@ import { EditStructureEmaSpotDto } from './dto/edit-structure-ema-spot.dto';
 import { StartStructureEmaSpotDto } from './dto/start-structure-ema-spot.dto';
 import { StopStructureEmaSpotDto } from './dto/stop-structure-ema-spot.dto';
 import {
+  ManualEntryStructureEmaSpotDto,
   ManualExitStructureEmaSpotDto,
   OperateStructureEmaSpotDto,
 } from './dto/operate-structure-ema-spot.dto';
@@ -78,5 +79,13 @@ export class StructureEmaSpotController {
     @Body() dto: ManualExitStructureEmaSpotDto,
   ) {
     return await this.structureEmaSpotService.manualExit(dto, user.id);
+  }
+
+  @Post('manualEntry')
+  async manualEntry(
+    @CurrentUser() user: User,
+    @Body() dto: ManualEntryStructureEmaSpotDto,
+  ) {
+    return await this.structureEmaSpotService.manualEntry(dto, user.id);
   }
 }

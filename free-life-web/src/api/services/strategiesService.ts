@@ -13,6 +13,7 @@ import {
   EditStructureEmaSpotParams,
   GetStructureEmaSpotConfigResponse,
   ActiveSpotEmaTrade,
+  ManualEntryStructureEmaSpotParams,
   ManualExitStructureEmaSpotParams,
 } from "../types/strategiesTypes";
 
@@ -166,5 +167,14 @@ export const manualExitStructureEmaSpot = (
 ) =>
   apiClient.post<string>({
     url: "/strategies/structureEmaSpot/manualExit",
+    data,
+  });
+
+/** 按用户指定的价格立即创建EMA策略限价买单 */
+export const manualEntryStructureEmaSpot = (
+  data: ManualEntryStructureEmaSpotParams,
+) =>
+  apiClient.post<string>({
+    url: "/strategies/structureEmaSpot/manualEntry",
     data,
   });

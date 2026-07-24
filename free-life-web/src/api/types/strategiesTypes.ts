@@ -222,3 +222,8 @@ export type ManualExitStructureEmaSpotParams = {
   exitPrice: number;
   pauseEntry?: boolean;
 };
+
+export type ManualEntryStructureEmaSpotParams = {
+  strategyId: number;
+  entryPrice: number;
+};

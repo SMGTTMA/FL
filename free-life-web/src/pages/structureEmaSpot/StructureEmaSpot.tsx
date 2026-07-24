@@ -8,6 +8,7 @@ import dayjs from "dayjs";
 import { useState } from "react";
 import { AddOrEditStructureEmaSpot } from "./components/addOrEditStructureEmaSpot/AddOrEditStructureEmaSpot";
 import { ManageStructureEmaTrades } from "./components/manageStructureEmaTrades/ManageStructureEmaTrades";
+import { ManualEntryStructureEmaSpot } from "./components/manualEntryStructureEmaSpot/ManualEntryStructureEmaSpot";
 import { StopStructureEmaSpot } from "./components/stopStructureEmaSpot/StopStructureEmaSpot";
 import { ToggleStructureEmaEntry } from "./components/toggleStructureEmaEntry/ToggleStructureEmaEntry";
 
@@ -183,12 +184,13 @@ const StructureEmaSpot = () => {
 			title: "操作",
 			key: "action",
 			fixed: "right",
-			width: 130,
+			width: 220,
 			render: (_, record) => {
 				if (record.status !== StrategyStatusEnum.RUNNING) return "-";
 				return (
 					<Space size={0}>
 						<ManageStructureEmaTrades strategyId={record.id} symbol={record.symbol} onSuccess={refresh} />
+						<ManualEntryStructureEmaSpot record={record} onSuccess={refresh} />
 						<ToggleStructureEmaEntry
 							strategyId={record.id}
 							paused={record.parameters?.entryPaused === true}
@@ -226,7 +228,7 @@ const StructureEmaSpot = () => {
 					showTotal: (total) => `共 ${total} 条`,
 				}}
 				onChange={handleTableChange}
-				scroll={{ x: 2120, y: "calc(100vh - 300px)" }}
+				scroll={{ x: 2210, y: "calc(100vh - 300px)" }}
 			/>
 		</div>
 	);

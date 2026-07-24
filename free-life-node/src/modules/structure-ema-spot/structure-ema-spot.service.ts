@@ -45,7 +45,10 @@ import {
 } from './constants/structure-ema-spot.constants';
 import { EditStructureEmaSpotDto } from './dto/edit-structure-ema-spot.dto';
 import { StartStructureEmaSpotDto } from './dto/start-structure-ema-spot.dto';
-import { ManualExitStructureEmaSpotDto } from './dto/operate-structure-ema-spot.dto';
+import {
+  ManualEntryStructureEmaSpotDto,
+  ManualExitStructureEmaSpotDto,
+} from './dto/operate-structure-ema-spot.dto';
 import {
   EmaSignalContext,
   StructureEmaMode,
@@ -94,6 +97,14 @@ type ExitOrderTask = ExitOrderGroup & {
 
 type EditExitOrderTask = ExitOrderTask & {
   existingSell: ActiveSpotEmaTrade;
+};
+
+type EntryOrderResult = {
+  orderId: string;
+  entryPrice: number;
+  takeProfitPrice: number;
+  tradeAmount: number;
+  positionCost: number;
 };
 
 /**
@@ -846,7 +857,7 @@ export class StructureEmaSpotService {
     context: EmaSignalContext;
     keyLevels: StrategyKeyLevel[];
     marketInfo: MarketOrderInfo;
-  }): Promise<void> {
+  }): Promise<EntryOrderResult | null> {
     const profile = this.getProfile(args.config, args.mode);
     const trades = await this.activeSpotEmaTradesService.findByStrategyRecordId(
       args.strategy.id,
@@ -864,7 +875,7 @@ export class StructureEmaSpotService {
         occupiedCapital,
       0,
     );
-    if (availableCapital + Number.EPSILON < slotCapital) return;
+    if (availableCapital + Number.EPSILON < slotCapital) return null;
 
     // 使用信号 K 线收盘价挂限价买单，并按交易所价格精度规范化。
     const entryPrice = roundUpPrice({
@@ -872,13 +883,13 @@ export class StructureEmaSpotService {
       precision: args.marketInfo.precisionPrice,
     });
     if (!this.isEntrySpacingAllowed(args.mode, entryPrice, trades, profile)) {
-      return;
+      return null;
     }
     if (
       args.mode === 'UP' &&
       !this.isKeyLevelDistanceAllowed(entryPrice, args.keyLevels, profile)
     ) {
-      return;
+      return null;
     }
 
     // 数量必须按交易所 stepLength 向下截断，避免实际占用资金超过单份预算。
@@ -886,7 +897,7 @@ export class StructureEmaSpotService {
       slotCapital / entryPrice,
       args.marketInfo.stepLength,
     );
-    if (tradeAmount < args.marketInfo.minSz) return;
+    if (tradeAmount < args.marketInfo.minSz) return null;
 
     const positionCost = entryPrice * tradeAmount;
     const balanceRes = await this.exchangeService.getBalance(
@@ -895,7 +906,7 @@ export class StructureEmaSpotService {
     const freeQuote = Number(balanceRes?.data?.[this.quoteAsset]?.free);
     if (!Number.isFinite(freeQuote) || freeQuote < positionCost) {
       args.strategy.stopReason = `账户可用${this.quoteAsset}不足，需要 ${positionCost} ${this.quoteAsset}`;
-      return;
+      return null;
     }
 
     const order: PlaceOrderDto = {
@@ -919,7 +930,7 @@ export class StructureEmaSpotService {
           '入场买单创建失败',
         ),
       ]);
-      return;
+      return null;
     }
 
     // 与 grid-cash 一致：只将交易所明确返回成功的订单批量写入活跃表。
@@ -959,6 +970,13 @@ export class StructureEmaSpotService {
         orderId: String(created.id),
       },
     ]);
+    return {
+      orderId: String(created.id),
+      entryPrice: acceptedEntryPrice,
+      takeProfitPrice: acceptedTakeProfitPrice,
+      tradeAmount: acceptedTradeAmount,
+      positionCost: acceptedPositionCost,
+    };
   }
 
   /**
@@ -1477,6 +1495,70 @@ export class StructureEmaSpotService {
       strategy.parameters = runtime;
       await this.strategyRecordRepository.save(strategy);
       return ResponseDto.success('已恢复创建新买单');
+    });
+  }
+
+  /**
+   * 用户只指定限价入场价格，方向、单份资金、数量、EMA 参数和最低止盈价
+   * 全部由当前策略计算。挂单成功后与自动入场订单使用同一套持仓和出场逻辑。
+   */
+  async manualEntry(
+    dto: ManualEntryStructureEmaSpotDto,
+    userId: number,
+  ): Promise<ResponseDto<string>> {
+    return await this.withStrategyLock(dto.strategyId, async () => {
+      const strategy = await this.findRunningStrategy(dto.strategyId, userId);
+      const runtime = parseStructureEmaRuntimeState(strategy.parameters);
+      if (runtime.entryPaused) {
+        throw new BadRequestException('策略已暂停开仓，请先恢复开仓');
+      }
+
+      const config = this.parseConfigJson(strategy.configJson);
+      const [snapshot, marketInfoRes] = await Promise.all([
+        this.getStructureSnapshot(strategy),
+        this.exchangeService.fetchMarketMinOrderInfo(
+          strategy.exchangeConfigId,
+          strategy.symbol,
+        ),
+      ]);
+      const mode = resolveModeByDirection(snapshot.direction);
+      if (!mode) {
+        throw new BadRequestException('当前日线方向不允许创建买单');
+      }
+
+      const entryPrice = toFinitePositiveNumber(dto.entryPrice, '入场价格');
+      const now = Date.now();
+      strategy.stopReason = null;
+      const result = await this.placeEntryOrder({
+        strategy,
+        config,
+        mode,
+        context: {
+          previousKlineTime: now,
+          currentKlineTime: now,
+          previousOpen: entryPrice,
+          previousClose: entryPrice,
+          currentOpen: entryPrice,
+          currentClose: entryPrice,
+          previousBodyMid: entryPrice,
+          currentBodyMid: entryPrice,
+          previousEma: entryPrice,
+          currentEma: entryPrice,
+          isEntrySignal: true,
+          isExitSignal: false,
+        },
+        keyLevels: snapshot.keyLevels,
+        marketInfo: this.normalizeMarketInfo(marketInfoRes?.data),
+      });
+      if (!result) {
+        throw new BadRequestException(
+          strategy.stopReason || '当前价格、资金或入场间距不满足策略条件',
+        );
+      }
+
+      return ResponseDto.success(
+        `限价买单已创建，价格 ${result.entryPrice}，数量 ${result.tradeAmount}，订单ID ${result.orderId}`,
+      );
     });
   }
 
